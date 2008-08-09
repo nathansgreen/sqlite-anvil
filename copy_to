@@ -1,0 +1,38 @@
+#!/bin/bash
+
+if [ ! -f .copy_to ]
+then
+	echo "No .copy_to file."
+	echo -n "Please enter target directory: "
+	read TARGET
+	echo "$TARGET" > .copy_to
+fi
+
+TARGET="`cat .copy_to`"
+
+function arg_error() {
+	echo "Usage: `basename "$0"` <machine>" 1>&2
+	exit 1
+}
+
+if [ $# -ne 1 ]; then arg_error "$0"; fi
+
+MACHINE=$1.cs.ucla.edu
+if ! host $MACHINE > /dev/null
+then
+	MACHINE=kudos-$1.cs.ucla.edu
+	host $MACHINE > /dev/null || arg_error "$0"
+fi
+
+rsync --rsh=ssh -vaSz --exclude=*.o --exclude=/.target_source \
+	--exclude=/*.lo --exclude=/*.la --exclude=/sqlite3.c \
+	--exclude=/sqlite3 --exclude=/libsqlite3.la \
+	--exclude=/sqlite3.h --exclude=/opcodes.* --exclude=/tags \
+	--exclude=/.libs/ --exclude=/.deps/ --exclude=/test.db \
+	--exclude=/tsrc/ --exclude=/lemon --exclude=/gmon.out \
+	--exclude=/lempar.c --exclude=/parse.* --exclude=/common.tcl \
+	--exclude=/sqlite*.tar.gz --exclude=/testfixture \
+	--exclude=/mkkeywordhash --exclude=/keywordhash.h \
+	--exclude=/*.da --exclude=/*.bb --exclude=/*.bbg \
+	--exclude=.*.swp --exclude=.*.swo --exclude=.*.swn \
+	. $MACHINE:$TARGET/

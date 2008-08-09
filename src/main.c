@@ -26,6 +26,10 @@
 # include "rtree.h"
 #endif
 
+#if HAVE_TOILET
+#include <toilet++.h>
+#endif
+
 /*
 ** The version of the library
 */
@@ -113,6 +117,15 @@ int sqlite3_initialize(void){
     sqlite3StatusReset();
     inProgress = 1;
     rc = sqlite3_os_init();
+#if HAVE_TOILET
+    if( rc==SQLITE_OK && !sqlite3Config.isToiletInit ){
+      rc = toilet_init(".");
+      if( rc>= 0 ){
+        rc = SQLITE_OK;
+        sqlite3Config.isToiletInit = 1;
+      }
+    }
+#endif
     inProgress = 0;
     sqlite3Config.isInit = (rc==SQLITE_OK ? 1 : 0);
     sqlite3_mutex_leave(sqlite3Config.pInitMutex);

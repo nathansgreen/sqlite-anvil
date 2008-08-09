@@ -1,0 +1,71 @@
+#!/bin/bash
+
+make || exit $?
+
+# Uncomment to enable patchgroup traces on the test
+#TRACE="PATCHGROUP_TRACE=sqlite.pgt"
+
+HOST="`hostname`"
+if [ "${HOST#kudos-}" == "$HOST" -a "$HOST" != "execl" ]
+then
+	echo "Not running on a kudos-* test machine, won't overwrite your file systems."
+	exit 1
+fi
+
+if mount | grep -q "on /mnt/test"
+then
+	echo "/mnt/test is mounted; unmount before running this script."
+	exit 1
+fi
+
+echo -n "Creating file system... "
+sudo mke2fs -m 0 -b 4096 /dev/sdb1 &> /dev/null
+sudo mount /dev/sdb1 /mnt/test -t ext2
+sudo chown `whoami` /mnt/test
+mkdir /mnt/test/journals
+sudo umount /mnt/test
+echo "done."
+
+echo -n "Loading Featherstitch... "
+sudo insmod fstitch/kfstitchd.ko device=/dev/sdb
+[ -f /proc/kfstitchd_debug ] && (cat /proc/kfstitchd_debug > try.fdb &) || rm -f try.fdb
+sudo mount /mnt/test
+echo "done."
+
+# Run the sqlite test
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE exec '"$WD/sqlite3"' sql) << EOF
+create table foo (bar int, baz int);
+.explain on
+explain insert into foo (bar, baz) values (1, 2);
+pragma vdbe_trace=on;
+insert into foo (bar, baz) values (1, 2);
+select * from foo;
+EOF
+ls -lR /mnt/test
+
+echo "Unloading Featherstitch..."
+sudo umount /mnt/test
+time sudo rmmod kfstitchd
+
+echo -ne \\007
+
+sudo mount /dev/sdb1 /mnt/test -t ext2
+if [ -f /mnt/test/core ]
+then
+	echo "Starting debugger on core."
+	gdb -c /mnt/test/core .libs/lt-sqlite3
+fi
+if [ -f /mnt/test/gmon.out ]
+then
+	cp /mnt/test/gmon.out .
+	gprof .libs/sqlite3 gmon.out > gmon.sum
+else
+	rm -f gmon.out gmon.sum
+fi
+for pgt in /mnt/test/*.pgt
+do
+	[ "$pgt" == "/mnt/test/*.pgt" ] && break
+	echo "Patchgroup trace: `basename "$pgt"`"
+	cp "$pgt" .
+done
+sudo umount /mnt/test

@@ -15,7 +15,10 @@
 ** See the header comment on "btreeInt.h" for additional information.
 ** Including a description of file format and an overview of operation.
 */
+#include <limits.h>
 #include "btreeInt.h"
+
+#define Tprintf(format, args...) printf("%s(" format ")\n", __FUNCTION__, ##args)
 
 /*
 ** The header string that appears at the beginning of every
@@ -399,6 +402,7 @@ int sqlite3BtreeRestoreCursorPosition(BtCursor *pCur){
 */
 int sqlite3BtreeCursorHasMoved(BtCursor *pCur, int *pHasMoved){
   int rc;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(pCur->pBtree), pCur->pgnoRoot);
 
   rc = restoreCursorPosition(pCur);
   if( rc ){
@@ -1170,6 +1174,7 @@ int sqlite3BtreeOpen(
   int rc = SQLITE_OK;
   int nReserve;
   unsigned char zDbHeader[100];
+  Tprintf("\"%s\", 0x%x, 0x%x", zFilename, flags, vfsFlags);
 
   /* Set the variable isMemdb to true for an in-memory database, or 
   ** false for a file-based database. This symbol is only required if
@@ -1268,6 +1273,87 @@ int sqlite3BtreeOpen(
     if( rc!=SQLITE_OK ){
       goto btree_open_out;
     }
+#if HAVE_TOILET
+    if( 1 /* flags & BTREE_TOILET */){
+      int i, fresh = 0;
+      /* XXX HACK */
+      char * toilet_name = malloc(strlen(zFilename) + 8);
+      strcpy(toilet_name, zFilename);
+      strcat(toilet_name, ".toilet");
+      TX_HANDLE_INIT(pBt->toilet.tx);
+      pBt->toilet.db = toilet_open(toilet_name, stderr);
+      if( !pBt->toilet.db && errno == ENOENT && ((flags & BTREE_CREATE) || (vfsFlags & SQLITE_OPEN_CREATE)) ){
+        rc = toilet_new(toilet_name);
+        if( rc < 0 ) {
+          rc = SQLITE_ERROR;
+          free(toilet_name);
+          goto btree_open_out;
+        }
+        pBt->toilet.db = toilet_open(toilet_name, stderr);
+        free(toilet_name);
+        if( pBt->toilet.db ){
+          rc = toilet_new_gtable(pBt->toilet.db, "root");
+          if( rc < 0 ){
+            rc = SQLITE_INTERNAL;
+            goto btree_open_out;
+          }
+          rc = toilet_new_gtable(pBt->toilet.db, "1");
+          if( rc < 0 ){
+            rc = SQLITE_INTERNAL;
+            goto btree_open_out;
+          }
+          fresh = 1;
+        }
+      }else{
+        free(toilet_name);
+      }
+      if( !pBt->toilet.db || !(pBt->toilet.root = toilet_get_gtable(pBt->toilet.db, "root")) ){
+        rc = SQLITE_ERROR;
+        goto btree_open_out;
+      }
+      pBt->toilet.next = toilet_get_row(pBt->toilet.root, 0);
+      if( !pBt->toilet.next ){
+        rc = SQLITE_INTERNAL;
+        goto btree_open_out;
+      }
+      pBt->toilet.meta = toilet_get_row(pBt->toilet.root, 1);
+      if( !pBt->toilet.meta ){
+        rc = SQLITE_INTERNAL;
+        goto btree_open_out;
+      }
+      if( fresh ){
+        t_row *flag_row;
+        t_value value = {v_int: TOILET_FIRST_TABLE_NO};
+        rc = toilet_row_set_value(pBt->toilet.next, "next", T_INT, &value);
+        if( rc < 0 ){
+          rc = SQLITE_ERROR;
+          goto btree_open_out;
+        }
+        value.v_int = 0;
+        for(i=0;i<=15;i++){
+          const char name[2] = {"0123456789ABCDEF"[i], 0};
+          rc = toilet_row_set_value(pBt->toilet.meta, name, T_INT, &value);
+          if( rc < 0 ){
+            rc = SQLITE_ERROR;
+            goto btree_open_out;
+          }
+        }
+        value.v_int = 0x5;
+        flag_row = toilet_get_row(pBt->toilet.root, 1);
+        if( !flag_row ){
+          rc = SQLITE_INTERNAL;
+          goto btree_open_out;
+        }
+        rc = toilet_row_set_value(flag_row, "flags", T_INT, &value);
+        toilet_put_row(flag_row);
+        if( rc < 0 ){
+          rc = SQLITE_ERROR;
+          goto btree_open_out;
+        }
+        rc = SQLITE_OK;
+      }
+    }
+#endif
     sqlite3PagerSetBusyhandler(pBt->pPager, &pBt->busyHdr);
     p->pBt = pBt;
   
@@ -1364,6 +1450,19 @@ int sqlite3BtreeOpen(
 
 btree_open_out:
   if( rc!=SQLITE_OK ){
+#if HAVE_TOILET
+    if( pBt ){
+      if( pBt->toilet.next ){
+        toilet_put_row(pBt->toilet.next);
+      }
+      if( pBt->toilet.root ){
+        toilet_put_gtable(pBt->toilet.root);
+      }
+      if( pBt->toilet.db ){
+        toilet_close(pBt->toilet.db);
+      }
+    }
+#endif
     if( pBt && pBt->pPager ){
       sqlite3PagerClose(pBt->pPager);
     }
@@ -1438,6 +1537,7 @@ static void freeTempSpace(BtShared *pBt){
 int sqlite3BtreeClose(Btree *p){
   BtShared *pBt = p->pBt;
   BtCursor *pCur;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
 
   /* Close all cursors opened via this handle.  */
   assert( sqlite3_mutex_held(p->db->mutex) );
@@ -1471,6 +1571,18 @@ int sqlite3BtreeClose(Btree *p){
     ** Clean out and delete the BtShared object.
     */
     assert( !pBt->pCursor );
+#if HAVE_TOILET
+    if( pBt->toilet.next ){
+      toilet_put_row(pBt->toilet.next);
+    }
+    if( pBt->toilet.root ){
+      toilet_put_gtable(pBt->toilet.root);
+    }
+    if( pBt->toilet.db ){
+      toilet_close(pBt->toilet.db);
+    }
+    TX_CLEANUP(pBt->toilet.tx);
+#endif
     sqlite3PagerClose(pBt->pPager);
     if( pBt->xFreeSchema && pBt->pSchema ){
       pBt->xFreeSchema(pBt->pSchema);
@@ -1508,6 +1620,7 @@ int sqlite3BtreeClose(Btree *p){
 */
 int sqlite3BtreeSetCacheSize(Btree *p, int mxPage){
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), mxPage);
   assert( sqlite3_mutex_held(p->db->mutex) );
   sqlite3BtreeEnter(p);
   sqlite3PagerSetCachesize(pBt->pPager, mxPage);
@@ -1526,6 +1639,7 @@ int sqlite3BtreeSetCacheSize(Btree *p, int mxPage){
 #ifndef SQLITE_OMIT_PAGER_PRAGMAS
 int sqlite3BtreeSetSafetyLevel(Btree *p, int level, int fullSync){
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), level, fullSync);
   assert( sqlite3_mutex_held(p->db->mutex) );
   sqlite3BtreeEnter(p);
   sqlite3PagerSetSafetyLevel(pBt->pPager, level, fullSync);
@@ -1541,6 +1655,7 @@ int sqlite3BtreeSetSafetyLevel(Btree *p, int level, int fullSync){
 int sqlite3BtreeSyncDisabled(Btree *p){
   BtShared *pBt = p->pBt;
   int rc;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
   assert( sqlite3_mutex_held(p->db->mutex) );  
   sqlite3BtreeEnter(p);
   assert( pBt && pBt->pPager );
@@ -1568,6 +1683,7 @@ int sqlite3BtreeSyncDisabled(Btree *p){
 int sqlite3BtreeSetPageSize(Btree *p, int pageSize, int nReserve){
   int rc = SQLITE_OK;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), pageSize, nReserve);
   sqlite3BtreeEnter(p);
   if( pBt->pageSizeFixed ){
     sqlite3BtreeLeave(p);
@@ -1610,6 +1726,7 @@ int sqlite3BtreeGetReserve(Btree *p){
 */
 int sqlite3BtreeMaxPageCount(Btree *p, int mxPage){
   int n;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), mxPage);
   sqlite3BtreeEnter(p);
   n = sqlite3PagerMaxPageCount(p->pBt->pPager, mxPage);
   sqlite3BtreeLeave(p);
@@ -1624,6 +1741,7 @@ int sqlite3BtreeMaxPageCount(Btree *p, int mxPage){
 ** determined by the SQLITE_DEFAULT_AUTOVACUUM macro.
 */
 int sqlite3BtreeSetAutoVacuum(Btree *p, int autoVacuum){
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), autoVacuum);
 #ifdef SQLITE_OMIT_AUTOVACUUM
   return SQLITE_READONLY;
 #else
@@ -1903,6 +2021,7 @@ static int newDatabase(BtShared *pBt){
 int sqlite3BtreeBeginTrans(Btree *p, int wrflag){
   BtShared *pBt = p->pBt;
   int rc = SQLITE_OK;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), wrflag);
 
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
@@ -1970,6 +2089,16 @@ int sqlite3BtreeBeginTrans(Btree *p, int wrflag){
           sqlite3BtreeInvokeBusyHandler(pBt, 0) );
 
   if( rc==SQLITE_OK ){
+#if HAVE_TOILET
+    if( pBt->toilet.db ){
+      rc = TX_START(pBt->toilet.tx);
+      if( rc < 0 ){
+        rc = SQLITE_INTERNAL;
+        goto trans_begun;
+      }
+      rc = SQLITE_OK;
+    }
+#endif
     if( p->inTrans==TRANS_NONE ){
       pBt->nTransaction++;
     }
@@ -2304,6 +2433,7 @@ static int incrVacuumStep(BtShared *pBt, Pgno nFin){
 int sqlite3BtreeIncrVacuum(Btree *p){
   int rc;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
 
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
@@ -2419,6 +2549,7 @@ static int autoVacuumCommit(BtShared *pBt, Pgno *pnTrunc){
 */
 int sqlite3BtreeCommitPhaseOne(Btree *p, const char *zMaster){
   int rc = SQLITE_OK;
+  Tprintf("\"%s\", \"%s\"", sqlite3BtreeGetFilename(p), zMaster);
   if( p->inTrans==TRANS_WRITE ){
     BtShared *pBt = p->pBt;
     Pgno nTrunc = 0;
@@ -2436,6 +2567,16 @@ int sqlite3BtreeCommitPhaseOne(Btree *p, const char *zMaster){
     rc = sqlite3PagerCommitPhaseOne(pBt->pPager, zMaster, nTrunc, 0);
     sqlite3BtreeLeave(p);
   }
+#if HAVE_TOILET
+  if( p->pBt->toilet.db && IN_TX(p->pBt->toilet.tx) ){
+    rc = TX_END(p->pBt->toilet.tx);
+    if( rc < 0 ){
+      sqlite3BtreeLeave(p);
+      return SQLITE_INTERNAL;
+    }
+    rc = SQLITE_OK;
+  }
+#endif
   return rc;
 }
 
@@ -2455,6 +2596,7 @@ int sqlite3BtreeCommitPhaseOne(Btree *p, const char *zMaster){
 */
 int sqlite3BtreeCommitPhaseTwo(Btree *p){
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
 
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
@@ -2505,6 +2647,7 @@ int sqlite3BtreeCommitPhaseTwo(Btree *p){
 */
 int sqlite3BtreeCommit(Btree *p){
   int rc;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
   sqlite3BtreeEnter(p);
   rc = sqlite3BtreeCommitPhaseOne(p, 0);
   if( rc==SQLITE_OK ){
@@ -2554,6 +2697,7 @@ static int countWriteCursors(BtShared *pBt){
 */
 void sqlite3BtreeTripAllCursors(Btree *pBtree, int errCode){
   BtCursor *p;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(pBtree), errCode);
   sqlite3BtreeEnter(pBtree);
   for(p=pBtree->pBt->pCursor; p; p=p->pNext){
     clearCursorPosition(p);
@@ -2576,6 +2720,7 @@ int sqlite3BtreeRollback(Btree *p){
   int rc;
   BtShared *pBt = p->pBt;
   MemPage *pPage1;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
 
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
@@ -2653,6 +2798,7 @@ int sqlite3BtreeRollback(Btree *p){
 int sqlite3BtreeBeginStmt(Btree *p){
   int rc;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( (p->inTrans!=TRANS_WRITE) || pBt->inStmt ){
@@ -2674,6 +2820,7 @@ int sqlite3BtreeBeginStmt(Btree *p){
 int sqlite3BtreeCommitStmt(Btree *p){
   int rc;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
@@ -2697,6 +2844,7 @@ int sqlite3BtreeCommitStmt(Btree *p){
 int sqlite3BtreeRollbackStmt(Btree *p){
   int rc = SQLITE_OK;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\"", sqlite3BtreeGetFilename(p));
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
@@ -2803,9 +2951,37 @@ int sqlite3BtreeCursor(
   BtCursor *pCur                              /* Write new cursor here */
 ){
   int rc;
+  Tprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), iTable, wrFlag);
   sqlite3BtreeEnter(p);
   p->pBt->db = p->db;
   rc = btreeCursor(p, iTable, wrFlag, pKeyInfo, pCur);
+#if HAVE_TOILET
+  pCur->toilet.table = NULL;
+  if( p->pBt->toilet.db && rc == SQLITE_OK ){
+    t_row *flag_row = toilet_get_row(p->pBt->toilet.root, iTable);
+    rc = SQLITE_INTERNAL;
+    if( flag_row ){
+      const t_value *flags = toilet_row_value(flag_row, "flags", T_INT);
+      if( flags ){
+        char number[24];
+        pCur->toilet.flags = flags->v_int;
+        snprintf(number, sizeof(number), "%u", iTable);
+        pCur->toilet.table = toilet_get_gtable(p->pBt->toilet.db, number);
+        if( pCur->toilet.table ){
+          pCur->toilet.cursor = toilet_gtable_cursor(pCur->toilet.table);
+          if( pCur->toilet.cursor ){
+            pCur->toilet.row = NULL;
+            rc = SQLITE_OK;
+          }else{
+            toilet_put_gtable(pCur->toilet.table);
+            pCur->toilet.table = NULL;
+          }
+        }
+      }
+      toilet_put_row(flag_row);
+    }
+  }
+#endif
   sqlite3BtreeLeave(p);
   return rc;
 }
@@ -2821,9 +2997,19 @@ int sqlite3BtreeCursorSize(){
 */
 int sqlite3BtreeCloseCursor(BtCursor *pCur){
   Btree *pBtree = pCur->pBtree;
+  Tprintf("\"%s\", %d", pBtree ? sqlite3BtreeGetFilename(pBtree) : NULL, pCur->pgnoRoot);
   if( pBtree ){
     BtShared *pBt = pCur->pBt;
     sqlite3BtreeEnter(pBtree);
+#if HAVE_TOILET
+    if( pCur->toilet.table ){
+      if( pCur->toilet.row ){
+        toilet_put_row(pCur->toilet.row);
+      }
+      toilet_close_cursor(pCur->toilet.cursor);
+      toilet_put_gtable(pCur->toilet.table);
+    }
+#endif
     pBt->db = pBtree->db;
     clearCursorPosition(pCur);
     if( pCur->pPrev ){
@@ -2848,6 +3034,7 @@ int sqlite3BtreeCloseCursor(BtCursor *pCur){
 ** The temporary cursor is not on the cursor list for the Btree.
 */
 void sqlite3BtreeGetTempCursor(BtCursor *pCur, BtCursor *pTempCur){
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
   memcpy(pTempCur, pCur, sizeof(*pCur));
   pTempCur->pNext = 0;
@@ -2862,6 +3049,7 @@ void sqlite3BtreeGetTempCursor(BtCursor *pCur, BtCursor *pTempCur){
 ** function above.
 */
 void sqlite3BtreeReleaseTempCursor(BtCursor *pCur){
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
   if( pCur->pPage ){
     sqlite3PagerUnref(pCur->pPage->pDbPage);
@@ -2924,6 +3112,7 @@ void sqlite3BtreeReleaseTempCursor(BtCursor *pCur){
 */
 int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
   int rc;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
@@ -2934,6 +3123,17 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
     }else{
       getCellInfo(pCur);
       *pSize = pCur->info.nKey;
+#if HAVE_TOILET
+      if( pCur->toilet.table ){
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          if( *pSize != toilet_cursor_row_id(pCur->toilet.cursor) ){
+            fprintf(stderr, "KEY ERROR %d != (toilet) %d\n", *pSize, toilet_cursor_row_id(pCur->toilet.cursor));
+          }
+        }else{
+          fprintf(stderr, "UNIMPLEMENTED TOILET KEYSIZE\n");
+        }
+      }
+#endif
     }
   }
   return rc;
@@ -2948,6 +3148,7 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
 */
 int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
   int rc;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
@@ -2959,6 +3160,31 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
     }else{
       getCellInfo(pCur);
       *pSize = pCur->info.nData;
+#if HAVE_TOILET
+      if( pCur->toilet.table ){
+        const t_value *value;
+        if( !pCur->toilet.row ){
+          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+          pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+        }
+        value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
+        if( value ){
+          if( *pSize != value->v_blob.length ){
+            fprintf(stderr, "SIZE ERROR %d != (toilet) %d\n", *pSize, value->v_blob.length);
+          }
+        }else{
+          value = toilet_row_value(pCur->toilet.row, "int", T_INT);
+          if( value ){
+            if( *pSize != sizeof(value->v_int) ){
+              fprintf(stderr, "SIZE ERROR %d != (toilet) %d\n", *pSize, sizeof(value->v_int));
+            }
+          }else{
+            /* XXX FIXME */
+            abort();
+          }
+        }
+      }
+#endif
     }
   }
   return rc;
@@ -3256,6 +3482,7 @@ static int accessPayload(
 */
 int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
   int rc;
+  Tprintf("\"%s\", (%d) %d:%d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, offset, amt);
 
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
@@ -3283,6 +3510,7 @@ int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
 */
 int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
   int rc;
+  Tprintf("\"%s\", (%d) %d:%d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, offset, amt);
 
 #ifndef SQLITE_OMIT_INCRBLOB
   if ( pCur->eState==CURSOR_INVALID ){
@@ -3297,6 +3525,33 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
     assert( pCur->pPage!=0 );
     assert( pCur->idx>=0 && pCur->idx<pCur->pPage->nCell );
     rc = accessPayload(pCur, offset, amt, pBuf, 1, 0);
+#if HAVE_TOILET
+    if( pCur->toilet.table && rc == SQLITE_OK ){
+      if( !pCur->toilet.row ){
+        t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+        pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+      }
+      const t_value *value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
+      const void *data = NULL;
+      u32 size = 0;
+      if( value ){
+        data = value->v_blob.data;
+        size = value->v_blob.length;
+      }else{
+        value = toilet_row_value(pCur->toilet.row, "int", T_INT);
+        if( value ){
+          /* endianness? */
+          data = &value->v_int;
+          size = sizeof(value->v_int);
+        }
+      }
+      /* XXX FIXME */
+      assert(data);
+      if( memcmp(pBuf, data + offset, amt) ){
+        fprintf(stderr, "DATA ERROR (toilet) blob\n");
+      }
+    }
+#endif
   }
   return rc;
 }
@@ -3372,16 +3627,72 @@ static const unsigned char *fetchPayload(
 ** in the common case where no overflow pages are used.
 */
 const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
   if( pCur->eState==CURSOR_VALID ){
+#if HAVE_TOILET
+    const void *data = (const void*)fetchPayload(pCur, pAmt, 0);
+    if( pCur->toilet.table ){
+      pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
+      if( *pAmt != sizeof(pCur->toilet.fetch_key) ){
+        fprintf(stderr, "WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
+      }
+      /* endianness? */
+      if( memcmp(&pCur->toilet.fetch_key, data, *pAmt) ){
+        fprintf(stderr, "DATA ERROR (toilet) key\n");
+      }
+      /* can return &pCur->toilet.fetch_key */
+    }
+    return data;
+#else
     return (const void*)fetchPayload(pCur, pAmt, 0);
+#endif
   }
   return 0;
 }
 const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
   if( pCur->eState==CURSOR_VALID ){
+#if HAVE_TOILET
+    const void *data = (const void*)fetchPayload(pCur, pAmt, 1);
+    if( pCur->toilet.table ){
+      if( !pCur->toilet.row ){
+        t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+        pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+      }
+      const t_value *value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
+      if( value ){
+        int min = (*pAmt < value->v_blob.length) ? *pAmt : value->v_blob.length;
+        if( min != *pAmt ){
+          fprintf(stderr, "WHOA: [blob] min (%d) != *pAmt (%d)!\n", min, *pAmt);
+        }
+        if( memcmp(value->v_blob.data, data, min) ){
+          fprintf(stderr, "DATA ERROR (toilet) blob\n");
+        }
+        /* can return value->v_blob.data */
+      }else{
+        value = toilet_row_value(pCur->toilet.row, "int", T_INT);
+        if( value ){
+          int min = (*pAmt < sizeof(value->v_int)) ? *pAmt : sizeof(value->v_int);
+          if( min != *pAmt ){
+            fprintf(stderr, "WHOA: [int] min (%d) != *pAmt (%d)!\n", min, *pAmt);
+          }
+          /* endianness? */
+          if( memcmp(&value->v_int, data, min) ){
+            fprintf(stderr, "DATA ERROR (toilet) int\n");
+          }
+          /* can return &value->v_int */
+        }else{
+          /* XXX FIXME */
+          abort();
+        }
+      }
+    }
+    return data;
+#else
     return (const void*)fetchPayload(pCur, pAmt, 1);
+#endif
   }
   return 0;
 }
@@ -3571,6 +3882,7 @@ static int moveToRightmost(BtCursor *pCur){
 */
 int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
   int rc;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
@@ -3595,6 +3907,7 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
 */
 int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
   int rc;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
  
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
@@ -3611,6 +3924,16 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
       pCur->atLast = rc==SQLITE_OK;
     }
   }
+#if HAVE_TOILET
+  if( pCur->toilet.table ){
+    if( pCur->toilet.row ){
+      toilet_put_row(pCur->toilet.row);
+      pCur->toilet.row = NULL;
+    }
+    toilet_cursor_last(pCur->toilet.cursor);
+    /* FIXME: check return value, etc. */
+  }
+#endif
   return rc;
 }
 
@@ -3652,6 +3975,7 @@ int sqlite3BtreeMoveto(
 ){
   int rc;
   char aSpace[200];
+  Tprintf("\"%s\", %d, \"%s\", %lld, %d", sqlite3BtreeGetFilename(pCur->pBtree), pCur->idx, pKey, nKey, biasRight);
 
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
@@ -3799,6 +4123,47 @@ int sqlite3BtreeMoveto(
     if( rc ) goto moveto_finish;
   }
 moveto_finish:
+#if HAVE_TOILET
+  if( pCur->toilet.table && rc == SQLITE_OK ){
+    if( pCur->toilet.flags & BTREE_INTKEY ){
+      if( nKey > UINT_MAX ){
+        /* XXX FIXME */
+        fprintf(stderr, "UNIMPLEMENTED TOILET SEEK\n");
+      }else{
+        if( pCur->toilet.row ){
+          toilet_put_row(pCur->toilet.row);
+          pCur->toilet.row = NULL;
+        }
+        rc = toilet_cursor_seek(pCur->toilet.cursor, nKey);
+        if( rc ){
+          /* found it */
+          rc = SQLITE_OK;
+          if( *pRes ){
+            fprintf(stderr, "SEEK ERROR %d != (toilet) 0\n", *pRes);
+          }
+        }else{
+          if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+            if( *pRes ){
+              fprintf(stderr, "SEEK SOFT ERROR %d != (toilet) [invalid]\n", *pRes);
+            }
+          }else{
+            t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+            if( nKey < id ){
+              if( *pRes <= 0){
+                fprintf(stderr, "SEEK ERROR %d != (toilet) 1\n", *pRes);
+              }
+            }else{
+              if( *pRes >= 0){
+                fprintf(stderr, "SEEK ERROR %d != (toilet) -1\n", *pRes);
+              }
+            }
+          }
+        }
+        rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
+      }
+    }
+  }
+#endif
   if( pKey ){
     /* If we created our own unpacked key at the top of this
     ** procedure, then destroy that key before returning. */
@@ -3816,6 +4181,7 @@ moveto_finish:
 ** the first entry.  TRUE is also returned if the table is empty.
 */
 int sqlite3BtreeEof(BtCursor *pCur){
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   /* TODO: What if the cursor is in CURSOR_REQUIRESEEK but all table entries
   ** have been deleted? This API will need to change to return an error code
   ** as well as the boolean result value.
@@ -3840,6 +4206,7 @@ sqlite3 *sqlite3BtreeCursorDb(const BtCursor *pCur){
 int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
   int rc;
   MemPage *pPage;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
@@ -3862,6 +4229,16 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
   assert( pPage->isInit );
   assert( pCur->idx<pPage->nCell );
 
+#if HAVE_TOILET
+  if( pCur->toilet.table ){
+    if( pCur->toilet.row ){
+      toilet_put_row(pCur->toilet.row);
+      pCur->toilet.row = NULL;
+    }
+    toilet_cursor_next(pCur->toilet.cursor);
+    /* FIXME: check return value, etc. */
+  }
+#endif
   pCur->idx++;
   pCur->info.nSize = 0;
   pCur->validNKey = 0;
@@ -3909,6 +4286,7 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
   int rc;
   Pgno pgno;
   MemPage *pPage;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
@@ -3927,6 +4305,16 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
   }
   pCur->skip = 0;
 
+#if HAVE_TOILET
+  if( pCur->toilet.table ){
+    if( pCur->toilet.row ){
+      toilet_put_row(pCur->toilet.row);
+      pCur->toilet.row = NULL;
+    }
+    toilet_cursor_prev(pCur->toilet.cursor);
+    /* FIXME: check return value, etc. */
+  }
+#endif
   pPage = pCur->pPage;
   assert( pPage->isInit );
   assert( pCur->idx>=0 );
@@ -5742,6 +6130,7 @@ int sqlite3BtreeInsert(
   BtShared *pBt = p->pBt;
   unsigned char *oldCell;
   unsigned char *newCell = 0;
+  Tprintf("\"%s\", %d, [%d] %lld, %d [\"%s\"], %d, %d", sqlite3BtreeGetFilename(p), pCur->pgnoRoot, pCur->pPage->intKey, nKey, nData, pData, nZero, appendBias);
 
   assert( cursorHoldsMutex(pCur) );
   if( pBt->inTransaction!=TRANS_WRITE ){
@@ -5811,6 +6200,32 @@ int sqlite3BtreeInsert(
   rc = balance(pPage, 1);
   if( rc==SQLITE_OK ){
     moveToRoot(pCur);
+#if HAVE_TOILET
+    if( pCur->toilet.table ){
+      if( pKey || nKey > UINT_MAX || nData > UINT_MAX || nZero ){
+        /* XXX FIXME */
+        fprintf(stderr, "UNIMPLEMENTED TOILET APPEND\n");
+      }else if( pData || nData ){
+        /* insertion doesn't use pCur->toilet.row */
+        t_row *row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
+        if( row ){
+          if( pData ){
+            const t_value value = {v_blob: {length: nData, data: (void *) pData}};
+            rc = toilet_row_set_value(row, "blob", T_BLOB, &value);
+            toilet_row_remove_key(row, "int");
+          }else{
+            const t_value value = {v_int: nData};
+            rc = toilet_row_set_value(row, "int", T_INT, &value);
+            toilet_row_remove_key(row, "blob");
+          }
+          toilet_put_row(row);
+          rc = (rc < 0) ? SQLITE_ERROR : SQLITE_OK;
+        }else{
+          rc = SQLITE_ERROR;
+        }
+      }
+    }
+#endif
   }
 end_insert:
   return rc;
@@ -5827,6 +6242,7 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   Pgno pgnoChild = 0;
   Btree *p = pCur->pBtree;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(pCur->pBtree), pCur->idx);
 
   assert( cursorHoldsMutex(pCur) );
   assert( pPage->isInit );
@@ -6075,10 +6491,34 @@ static int btreeCreateTable(Btree *p, int *piTable, int flags){
 }
 int sqlite3BtreeCreateTable(Btree *p, int *piTable, int flags){
   int rc;
+  Tprintf("\"%s\", 0x%X", sqlite3BtreeGetFilename(p), flags);
   sqlite3BtreeEnter(p);
   p->pBt->db = p->db;
   rc = btreeCreateTable(p, piTable, flags);
   sqlite3BtreeLeave(p);
+#if HAVE_TOILET
+  if( p->pBt->toilet.db && rc == SQLITE_OK ){
+    t_row_id id;
+    t_row *flag_row;
+    char number[24];
+    const t_value *next = toilet_row_value(p->pBt->toilet.next, "next", T_INT);
+    t_value value = *next;
+    /* XXX HACK */
+    id = *piTable; value.v_int++;
+    assert(id >= TOILET_FIRST_TABLE_NO);
+    snprintf(number, sizeof(number), "%u", id);
+    /* update the next table number */
+    toilet_row_set_value(p->pBt->toilet.next, "next", T_INT, &value);
+    /* store the flags for this table */
+    flag_row = toilet_get_row(p->pBt->toilet.root, id);
+    value.v_int = flags;
+    toilet_row_set_value(flag_row, "flags", T_INT, &value);
+    toilet_put_row(flag_row);
+    /* create the table itself */
+    toilet_new_gtable(p->pBt->toilet.db, number);
+  }
+#endif
+  Tprintf("\"%s\", *%d, 0x%X", sqlite3BtreeGetFilename(p), *piTable, flags);
   return rc;
 }
 
@@ -6140,6 +6580,7 @@ cleardatabasepage_out:
 int sqlite3BtreeClearTable(Btree *p, int iTable){
   int rc;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), iTable);
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( p->inTrans!=TRANS_WRITE ){
@@ -6284,6 +6725,7 @@ static int btreeDropTable(Btree *p, int iTable, int *piMoved){
 }
 int sqlite3BtreeDropTable(Btree *p, int iTable, int *piMoved){
   int rc;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), iTable);
   sqlite3BtreeEnter(p);
   p->pBt->db = p->db;
   rc = btreeDropTable(p, iTable, piMoved);
@@ -6307,12 +6749,13 @@ int sqlite3BtreeGetMeta(Btree *p, int idx, u32 *pMeta){
   int rc;
   unsigned char *pP1;
   BtShared *pBt = p->pBt;
+  Tprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), idx);
 
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
 
   /* Reading a meta-data value requires a read-lock on page 1 (and hence
-  ** the sqlite_master table. We grab this lock regardless of whether or
+  ** the sqlite_master table). We grab this lock regardless of whether or
   ** not the SQLITE_ReadUncommitted flag is set (the table rooted at page
   ** 1 is treated as a special case by queryTableLock() and lockTable()).
   */
@@ -6331,6 +6774,15 @@ int sqlite3BtreeGetMeta(Btree *p, int idx, u32 *pMeta){
   pP1 = (unsigned char *)sqlite3PagerGetData(pDbPage);
   *pMeta = get4byte(&pP1[36 + idx*4]);
   sqlite3PagerUnref(pDbPage);
+#if HAVE_TOILET
+  if( pBt->toilet.db ){
+    const char name[2] = {"0123456789ABCDEF"[idx], 0};
+    const t_value * value = toilet_row_value(pBt->toilet.meta, name, T_INT);
+    if( value->v_int != *pMeta ){
+      fprintf(stderr, "META ERROR [%d \"%s\"] %d != (toilet) %d\n", idx, name, *pMeta, value->v_int);
+    }
+  }
+#endif
 
   /* If autovacuumed is disabled in this build but we are trying to 
   ** access an autovacuumed database, then make the database readonly. 
@@ -6353,6 +6805,7 @@ int sqlite3BtreeUpdateMeta(Btree *p, int idx, u32 iMeta){
   BtShared *pBt = p->pBt;
   unsigned char *pP1;
   int rc;
+  Tprintf("\"%s\", %d, %u", sqlite3BtreeGetFilename(p), idx, iMeta);
   assert( idx>=1 && idx<=15 );
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
@@ -6371,6 +6824,13 @@ int sqlite3BtreeUpdateMeta(Btree *p, int idx, u32 iMeta){
         pBt->incrVacuum = iMeta;
       }
 #endif
+#if HAVE_TOILET
+      if( pBt->toilet.db ){
+        const char name[2] = {"0123456789ABCDEF"[idx], 0};
+        const t_value value = {v_int: iMeta};
+        rc = toilet_row_set_value(pBt->toilet.meta, name, T_INT, &value);
+      }
+#endif
     }
   }
   sqlite3BtreeLeave(p);
@@ -6386,10 +6846,20 @@ int sqlite3BtreeFlags(BtCursor *pCur){
   ** restoreCursorPosition() here.
   */
   MemPage *pPage;
+  Tprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   restoreCursorPosition(pCur);
   pPage = pCur->pPage;
   assert( cursorHoldsMutex(pCur) );
   assert( pPage->pBt==pCur->pBt );
+  Tprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pPage ? pPage->aData[pPage->hdrOffset] : 0);
+#if HAVE_TOILET
+  if( pCur->toilet.table && pPage ){
+    /* NOTE: 0x8 is random, 0x7 is 0x5 (intkey+leafdata) for tables and 0x2 (zerodata) for indices: these were the flags to CreateTable! */
+    if( (pPage->aData[pPage->hdrOffset] & 0x7) != pCur->toilet.flags ){
+      fprintf(stderr, "ERROR \"\":%d flags 0x%X != (toilet) 0x%X\n", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->toilet.flags);
+    }
+  }
+#endif
   return pPage ? pPage->aData[pPage->hdrOffset] : 0;
 }
 
@@ -6905,6 +7375,7 @@ static int btreeCopyFile(Btree *pTo, Btree *pFrom){
 
   nToPageSize = pBtTo->pageSize;
   nFromPageSize = pBtFrom->pageSize;
+  Tprintf("\"%s\", \"%s\"", sqlite3BtreeGetFilename(pTo), sqlite3BtreeGetFilename(pFrom));
 
   if( pTo->inTrans!=TRANS_WRITE || pFrom->inTrans!=TRANS_WRITE ){
     return SQLITE_ERROR;
@@ -6991,7 +7462,7 @@ static int btreeCopyFile(Btree *pTo, Btree *pFrom){
           }
 
           memcpy(zTo, zFrom, nCopy);
-	  sqlite3PagerUnref(pFromPage);
+          sqlite3PagerUnref(pFromPage);
         }
       }
 
@@ -7056,7 +7527,7 @@ static int btreeCopyFile(Btree *pTo, Btree *pFrom){
           rc = sqlite3PagerGet(pBtFrom->pPager, iFrom, &pFromPage);
           if( rc==SQLITE_OK ){
             char *zFrom = sqlite3PagerGetData(pFromPage);
-  	  rc = sqlite3OsWrite(pFile, zFrom, nFromPageSize, iOff);
+            rc = sqlite3OsWrite(pFile, zFrom, nFromPageSize, iOff);
             sqlite3PagerUnref(pFromPage);
           }
         }
@@ -7169,6 +7640,7 @@ int sqlite3BtreeSchemaLocked(Btree *p){
 */
 int sqlite3BtreeLockTable(Btree *p, int iTab, u8 isWriteLock){
   int rc = SQLITE_OK;
+  Tprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), iTab, isWriteLock);
   if( p->sharable ){
     u8 lockType = READ_LOCK + isWriteLock;
     assert( READ_LOCK+1==WRITE_LOCK );

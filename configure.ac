@@ -580,6 +580,33 @@ AC_SUBST(TARGET_HAVE_READLINE)
 
 ##########
 # Figure out what C libraries are required to compile programs
+# that use "toilet" system.
+#
+TARGET_TOILET_LIBS=""
+TARGET_TOILET_INC=""
+TARGET_HAVE_TOILET=0
+AC_ARG_WITH(toilet, AC_HELP_STRING([--with-toilet=DIR],[directory containing toilet]), with_toilet="$withval", with_toilet="")
+
+if test x"$with_toilet" != x; then
+	found="no"
+	AC_CHECK_FILE($with_toilet/toilet++.h, found=yes)
+	if test x$found = xyes; then
+		found="no"
+		AC_CHECK_FILE($with_toilet/fstitch/include/patchgroup.h, found=yes)
+		if test x$found = xyes; then
+			TARGET_TOILET_LIBS="-L$with_toilet -ltoilet -Wl,--rpath -Wl,$with_toilet"
+			TARGET_TOILET_INC="-I$with_toilet -I$with_toilet/fstitch/include"
+			TARGET_HAVE_TOILET=1
+		fi
+	fi
+fi
+
+AC_SUBST(TARGET_TOILET_LIBS)
+AC_SUBST(TARGET_TOILET_INC)
+AC_SUBST(TARGET_HAVE_TOILET)
+
+##########
+# Figure out what C libraries are required to compile programs
 # that use "fdatasync()" function.
 #
 AC_SEARCH_LIBS(fdatasync, [rt])
