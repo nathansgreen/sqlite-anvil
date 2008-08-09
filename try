@@ -27,7 +27,7 @@ sudo umount /mnt/test
 echo "done."
 
 echo -n "Loading Featherstitch... "
-sudo insmod fstitch/kfstitchd.ko device=/dev/sdb
+sudo insmod fstitch/kfstitchd.ko device=/dev/sdb || exit $?
 [ -f /proc/kfstitchd_debug ] && (cat /proc/kfstitchd_debug > try.fdb &) || rm -f try.fdb
 sudo mount /mnt/test
 echo "done."
