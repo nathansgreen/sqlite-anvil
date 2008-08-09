@@ -208,6 +208,10 @@
 #include "btree.h"
 #include "os.h"
 #include <assert.h>
+#if HAVE_TOILET
+#include <toilet++.h>
+#include <transaction.h>
+#endif
 
 /* Round up a number to the next larger multiple of 8.  This is used
 ** to force 8-byte alignment on 64-bit architectures.
@@ -347,6 +351,28 @@ struct Btree {
 #define TRANS_READ  1
 #define TRANS_WRITE 2
 
+#if HAVE_TOILET
+typedef struct BtToilet BtToilet;
+struct BtToilet {
+  struct tx_handle tx;  /* The transaction handle */
+  t_toilet *db;         /* The main toilet */
+  t_gtable *root;       /* The root gtable */
+  t_row *next;          /* The row storing the next table number (0) */
+  t_row *meta;          /* The row storing meta information (1) */
+};
+
+#define TOILET_FIRST_TABLE_NO 2
+
+typedef struct BtToiletCursor BtToiletCursor;
+struct BtToiletCursor {
+  int flags;            /* The flags for this table */
+  t_gtable *table;      /* The gtable backing this table */
+  t_cursor *cursor;     /* The toilet cursor */
+  t_row *row;           /* The current row or NULL */
+  t_row_id fetch_key;   /* Storage returned by sqlite3BtreeKeyFetch() */
+};
+#endif
+
 /*
 ** An instance of this object represents a single database file.
 ** 
@@ -366,6 +392,9 @@ struct Btree {
 */
 struct BtShared {
   Pager *pPager;        /* The page cache */
+#if HAVE_TOILET
+  BtToilet toilet;      /* Toilet data */
+#endif
   sqlite3 *db;          /* Database connection currently using this Btree */
   BtCursor *pCursor;    /* A list of all open cursors */
   MemPage *pPage1;      /* First page of the database */
@@ -435,6 +464,9 @@ struct BtCursor {
   BtCursor *pNext, *pPrev;  /* Forms a linked list of all cursors */
   struct KeyInfo *pKeyInfo; /* Argument passed to comparison function */
   Pgno pgnoRoot;            /* The root page of this tree */
+#if HAVE_TOILET
+  BtToiletCursor toilet;    /* Toilet cursor info */
+#endif
   MemPage *pPage;           /* Page that contains the entry */
   int idx;                  /* Index of the entry in pPage->aCell[] */
   CellInfo info;            /* A parse of the cell we are pointing at */
