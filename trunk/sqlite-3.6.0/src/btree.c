@@ -3123,18 +3123,22 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
     }else{
       getCellInfo(pCur);
       *pSize = pCur->info.nKey;
-#if HAVE_TOILET
-      if( pCur->toilet.table ){
-        if( pCur->toilet.flags & BTREE_INTKEY ){
-          if( *pSize != toilet_cursor_row_id(pCur->toilet.cursor) ){
-            fprintf(stderr, "KEY ERROR %d != (toilet) %d\n", *pSize, toilet_cursor_row_id(pCur->toilet.cursor));
-          }
-        }else{
-          fprintf(stderr, "UNIMPLEMENTED TOILET KEYSIZE\n");
-        }
-      }
-#endif
     }
+#if HAVE_TOILET
+    if( pCur->toilet.table ){
+      if( pCur->toilet.flags & BTREE_INTKEY ){
+        if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+          if( *pSize ){
+            fprintf(stderr, "KEY ERROR %d != (toilet) 0\n", *pSize);
+          }
+        }else if( *pSize != toilet_cursor_row_id(pCur->toilet.cursor) ){
+          fprintf(stderr, "KEY ERROR %d != (toilet) %d\n", *pSize, toilet_cursor_row_id(pCur->toilet.cursor));
+        }
+      }else{
+        fprintf(stderr, "UNIMPLEMENTED TOILET KEYSIZE\n");
+      }
+    }
+#endif
   }
   return rc;
 }
@@ -3160,13 +3164,21 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
     }else{
       getCellInfo(pCur);
       *pSize = pCur->info.nData;
+    }
 #if HAVE_TOILET
-      if( pCur->toilet.table ){
-        const t_value *value;
-        if( !pCur->toilet.row ){
+    if( pCur->toilet.table ){
+      const t_value *value;
+      if( !pCur->toilet.row ){
+        if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+          if( *pSize ){
+            fprintf(stderr, "SIZE ERROR %d != (toilet) 0\n", *pSize);
+          }
+        }else{
           t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
           pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
         }
+      }
+      if( pCur->toilet.row ){
         value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
         if( value ){
           if( *pSize != value->v_blob.length ){
@@ -3184,8 +3196,8 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
           }
         }
       }
-#endif
     }
+#endif
   }
   return rc;
 }
@@ -4143,8 +4155,8 @@ moveto_finish:
           }
         }else{
           if( !toilet_cursor_valid(pCur->toilet.cursor) ){
-            if( *pRes ){
-              fprintf(stderr, "SEEK SOFT ERROR %d != (toilet) [invalid]\n", *pRes);
+            if( *pRes >= 0 ){
+              fprintf(stderr, "SEEK ERROR %d != (toilet) [invalid]\n", *pRes);
             }
           }else{
             t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
@@ -6202,10 +6214,11 @@ int sqlite3BtreeInsert(
     moveToRoot(pCur);
 #if HAVE_TOILET
     if( pCur->toilet.table ){
+      printf("%s() using gtable of cursor %p\n", __FUNCTION__, pCur->toilet.cursor);
       if( pKey || nKey > UINT_MAX || nData > UINT_MAX || nZero ){
         /* XXX FIXME */
         fprintf(stderr, "UNIMPLEMENTED TOILET APPEND\n");
-      }else if( pData || nData ){
+      }else{
         /* insertion doesn't use pCur->toilet.row */
         t_row *row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
         if( row ){
