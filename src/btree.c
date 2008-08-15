@@ -3645,15 +3645,19 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
 #if HAVE_TOILET
     const void *data = (const void*)fetchPayload(pCur, pAmt, 0);
     if( pCur->toilet.table ){
-      pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
-      if( *pAmt != sizeof(pCur->toilet.fetch_key) ){
-        fprintf(stderr, "WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
+      if( toilet_cursor_valid(pCur->toilet.cursor) ){
+        pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
+        if( *pAmt != sizeof(pCur->toilet.fetch_key) ){
+          fprintf(stderr, "WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
+        }
+        /* endianness? */
+        if( memcmp(&pCur->toilet.fetch_key, data, *pAmt) ){
+          fprintf(stderr, "DATA ERROR (toilet) key\n");
+        }
+        /* can return &pCur->toilet.fetch_key */
+      }else{
+        fprintf(stderr, "MISSING TOILET KEY\n");
       }
-      /* endianness? */
-      if( memcmp(&pCur->toilet.fetch_key, data, *pAmt) ){
-        fprintf(stderr, "DATA ERROR (toilet) key\n");
-      }
-      /* can return &pCur->toilet.fetch_key */
     }
     return data;
 #else
@@ -6214,10 +6218,10 @@ int sqlite3BtreeInsert(
     moveToRoot(pCur);
 #if HAVE_TOILET
     if( pCur->toilet.table ){
-      printf("%s() using gtable of cursor %p\n", __FUNCTION__, pCur->toilet.cursor);
-      if( pKey || nKey > UINT_MAX || nData > UINT_MAX || nZero ){
+      if( pKey || nKey > UINT_MAX || nZero ){
         /* XXX FIXME */
-        fprintf(stderr, "UNIMPLEMENTED TOILET APPEND\n");
+        fprintf(stderr, "UNIMPLEMENTED TOILET APPEND [pKey = %p, nKey = %lld, nZero = %d] [pData = %p, nData = %d]\n", pKey, nKey, nZero, pData, nData);
+        { size_t i; for(i = 0; i < nKey; i++) fprintf(stderr, " %02x", ((const uint8_t *) pKey)[i]); fprintf(stderr, "\n"); }
       }else{
         /* insertion doesn't use pCur->toilet.row */
         t_row *row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
