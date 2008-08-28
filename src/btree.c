@@ -18,7 +18,10 @@
 #include <limits.h>
 #include "btreeInt.h"
 
-#define Tprintf(format, args...) printf("%s(" format ")\n", __FUNCTION__, ##args)
+#define RED "\e[1m\e[31m"
+#define GREEN "\e[1m\e[32m"
+#define GRAY "\e[0m"
+#define Tprintf(format, args...) printf(GREEN "%s" GRAY "(" format ")\n", __FUNCTION__, ##args)
 
 /*
 ** The header string that appears at the beginning of every
@@ -3126,16 +3129,24 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
     }
 #if HAVE_TOILET
     if( pCur->toilet.table ){
-      if( pCur->toilet.flags & BTREE_INTKEY ){
-        if( !toilet_cursor_valid(pCur->toilet.cursor) ){
-          if( *pSize ){
-            fprintf(stderr, "KEY ERROR %d != (toilet) 0\n", *pSize);
-          }
-        }else if( *pSize != toilet_cursor_row_id(pCur->toilet.cursor) ){
-          fprintf(stderr, "KEY ERROR %d != (toilet) %d\n", *pSize, toilet_cursor_row_id(pCur->toilet.cursor));
+      if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+        if( *pSize ){
+          fprintf(stderr, RED "KEY ERROR %d != (toilet) 0\n" GRAY, *pSize);
         }
       }else{
-        fprintf(stderr, "UNIMPLEMENTED TOILET KEYSIZE\n");
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          assert( !toilet_gtable_blobkey(pCur->toilet.table) );
+          if( *pSize != toilet_cursor_row_id(pCur->toilet.cursor) ){
+            fprintf(stderr, RED "KEY ERROR %d != (toilet) %d\n" GRAY, *pSize, toilet_cursor_row_id(pCur->toilet.cursor));
+          }
+        }else{
+          size_t size;
+          assert( toilet_gtable_blobkey(pCur->toilet.table) );
+          toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          if( *pSize != size ){
+            fprintf(stderr, RED "KEY ERROR %d != (toilet) %d [blob]\n" GRAY, *pSize, size);
+          }
+        }
       }
     }
 #endif
@@ -3171,24 +3182,28 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
       if( !pCur->toilet.row ){
         if( !toilet_cursor_valid(pCur->toilet.cursor) ){
           if( *pSize ){
-            fprintf(stderr, "SIZE ERROR %d != (toilet) 0\n", *pSize);
+            fprintf(stderr, RED "SIZE ERROR %d != (toilet) 0\n" GRAY, *pSize);
           }
-        }else{
+        }else if(pCur->toilet.flags & BTREE_INTKEY ){
           t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
           pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+        }else{
+          size_t size;
+          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          pCur->toilet.row = toilet_get_row_blobkey(pCur->toilet.table, key, size);
         }
       }
       if( pCur->toilet.row ){
         value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
         if( value ){
           if( *pSize != value->v_blob.length ){
-            fprintf(stderr, "SIZE ERROR %d != (toilet) %d\n", *pSize, value->v_blob.length);
+            fprintf(stderr, RED "SIZE ERROR %d != (toilet) %d\n" GRAY, *pSize, value->v_blob.length);
           }
         }else{
           value = toilet_row_value(pCur->toilet.row, "int", T_INT);
           if( value ){
             if( *pSize != sizeof(value->v_int) ){
-              fprintf(stderr, "SIZE ERROR %d != (toilet) %d\n", *pSize, sizeof(value->v_int));
+              fprintf(stderr, RED "SIZE ERROR %d != (toilet) %d\n" GRAY, *pSize, sizeof(value->v_int));
             }
           }else{
             /* XXX FIXME */
@@ -3540,8 +3555,14 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
 #if HAVE_TOILET
     if( pCur->toilet.table && rc == SQLITE_OK ){
       if( !pCur->toilet.row ){
-        t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
-        pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+          pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+        }else{
+          size_t size;
+          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          pCur->toilet.row = toilet_get_row_blobkey(pCur->toilet.table, key, size);
+        }
       }
       const t_value *value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
       const void *data = NULL;
@@ -3560,7 +3581,7 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
       /* XXX FIXME */
       assert(data);
       if( memcmp(pBuf, data + offset, amt) ){
-        fprintf(stderr, "DATA ERROR (toilet) blob\n");
+        fprintf(stderr, RED "DATA ERROR (toilet) blob\n" GRAY);
       }
     }
 #endif
@@ -3646,17 +3667,27 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
     const void *data = (const void*)fetchPayload(pCur, pAmt, 0);
     if( pCur->toilet.table ){
       if( toilet_cursor_valid(pCur->toilet.cursor) ){
-        pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
-        if( *pAmt != sizeof(pCur->toilet.fetch_key) ){
-          fprintf(stderr, "WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
+        const void *key;
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
+          if( *pAmt != sizeof(pCur->toilet.fetch_key) ){
+            fprintf(stderr, RED "WHOA: key size (%d) != *pAmt (%d)!\n" GRAY, sizeof(pCur->toilet.fetch_key), *pAmt);
+          }
+          /* endianness? */
+          key = &pCur->toilet.fetch_key;
+        }else{
+          size_t size;
+          key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          if( *pAmt != size ){
+            fprintf(stderr, RED "WHOA: key size (%d) [blob] != *pAmt (%d)!\n" GRAY, key, *pAmt);
+          }
         }
-        /* endianness? */
-        if( memcmp(&pCur->toilet.fetch_key, data, *pAmt) ){
-          fprintf(stderr, "DATA ERROR (toilet) key\n");
+        if( memcmp(key, data, *pAmt) ){
+          fprintf(stderr, RED "DATA ERROR (toilet) key\n" GRAY);
         }
-        /* can return &pCur->toilet.fetch_key */
+        /* can return "key" */
       }else{
-        fprintf(stderr, "MISSING TOILET KEY\n");
+        fprintf(stderr, RED "MISSING TOILET KEY\n" GRAY);
       }
     }
     return data;
@@ -3674,17 +3705,23 @@ const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
     const void *data = (const void*)fetchPayload(pCur, pAmt, 1);
     if( pCur->toilet.table ){
       if( !pCur->toilet.row ){
-        t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
-        pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+          pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
+        }else{
+          size_t size;
+          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          pCur->toilet.row = toilet_get_row_blobkey(pCur->toilet.table, key, size);
+        }
       }
       const t_value *value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
       if( value ){
         int min = (*pAmt < value->v_blob.length) ? *pAmt : value->v_blob.length;
         if( min != *pAmt ){
-          fprintf(stderr, "WHOA: [blob] min (%d) != *pAmt (%d)!\n", min, *pAmt);
+          fprintf(stderr, RED "WHOA: [blob] min (%d) != *pAmt (%d)!\n" GRAY, min, *pAmt);
         }
         if( memcmp(value->v_blob.data, data, min) ){
-          fprintf(stderr, "DATA ERROR (toilet) blob\n");
+          fprintf(stderr, RED "DATA ERROR (toilet) blob\n" GRAY);
         }
         /* can return value->v_blob.data */
       }else{
@@ -3692,11 +3729,11 @@ const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
         if( value ){
           int min = (*pAmt < sizeof(value->v_int)) ? *pAmt : sizeof(value->v_int);
           if( min != *pAmt ){
-            fprintf(stderr, "WHOA: [int] min (%d) != *pAmt (%d)!\n", min, *pAmt);
+            fprintf(stderr, RED "WHOA: [int] min (%d) != *pAmt (%d)!\n" GRAY, min, *pAmt);
           }
           /* endianness? */
           if( memcmp(&value->v_int, data, min) ){
-            fprintf(stderr, "DATA ERROR (toilet) int\n");
+            fprintf(stderr, RED "DATA ERROR (toilet) int\n" GRAY);
           }
           /* can return &value->v_int */
         }else{
@@ -4141,41 +4178,76 @@ int sqlite3BtreeMoveto(
 moveto_finish:
 #if HAVE_TOILET
   if( pCur->toilet.table && rc == SQLITE_OK ){
+    if( pCur->toilet.row ){
+      toilet_put_row(pCur->toilet.row);
+      pCur->toilet.row = NULL;
+    }
     if( pCur->toilet.flags & BTREE_INTKEY ){
       if( nKey > UINT_MAX ){
         /* XXX FIXME */
-        fprintf(stderr, "UNIMPLEMENTED TOILET SEEK\n");
+        fprintf(stderr, RED "UNIMPLEMENTED TOILET SEEK (nKey)\n" GRAY);
       }else{
-        if( pCur->toilet.row ){
-          toilet_put_row(pCur->toilet.row);
-          pCur->toilet.row = NULL;
-        }
         rc = toilet_cursor_seek(pCur->toilet.cursor, nKey);
         if( rc ){
           /* found it */
           rc = SQLITE_OK;
           if( *pRes ){
-            fprintf(stderr, "SEEK ERROR %d != (toilet) 0\n", *pRes);
+            fprintf(stderr, RED "SEEK ERROR %d != (toilet) 0\n" GRAY, *pRes);
           }
         }else{
           if( !toilet_cursor_valid(pCur->toilet.cursor) ){
             if( *pRes >= 0 ){
-              fprintf(stderr, "SEEK ERROR %d != (toilet) [invalid]\n", *pRes);
+              fprintf(stderr, RED "SEEK ERROR %d != (toilet) [invalid]\n" GRAY, *pRes);
             }
           }else{
             t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
             if( nKey < id ){
               if( *pRes <= 0){
-                fprintf(stderr, "SEEK ERROR %d != (toilet) 1\n", *pRes);
+                fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1\n" GRAY, *pRes);
               }
             }else{
               if( *pRes >= 0){
-                fprintf(stderr, "SEEK ERROR %d != (toilet) -1\n", *pRes);
+                fprintf(stderr, RED "SEEK ERROR %d != (toilet) -1\n" GRAY, *pRes);
               }
             }
           }
         }
         rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
+      }
+    }else{
+      if( pKey ){
+        rc = toilet_cursor_seek_blobkey(pCur->toilet.cursor, pKey, nKey);
+        if( rc ){
+          /* found it */
+          rc = SQLITE_OK;
+          if( *pRes ){
+            fprintf(stderr, RED "SEEK ERROR %d != (toilet) 0 [blob]\n" GRAY, *pRes);
+          }
+        }else{
+          if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+            if( *pRes >= 0 ){
+              fprintf(stderr, RED "SEEK ERROR %d != (toilet) [invalid, blob]\n" GRAY, *pRes);
+            }
+          }else{
+            size_t size;
+            const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+            if( nKey < size )
+              size = nKey;
+            rc = memcmp(key, pKey, size);
+            if( rc > 0 ){
+              if( *pRes <= 0){
+                fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1 [blob]\n" GRAY, *pRes);
+              }
+            }else{
+              if( *pRes >= 0){
+                fprintf(stderr, RED "SEEK ERROR %d != (toilet) -1 [blob]\n" GRAY, *pRes);
+              }
+            }
+          }
+        }
+        rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
+      }else{
+        fprintf(stderr, RED "UNIMPLEMENTED TOILET SEEK (!pKey)\n" GRAY);
       }
     }
   }
@@ -6220,8 +6292,8 @@ int sqlite3BtreeInsert(
     if( pCur->toilet.table ){
       if( pKey || nKey > UINT_MAX || nZero ){
         /* XXX FIXME */
-        fprintf(stderr, "UNIMPLEMENTED TOILET APPEND [pKey = %p, nKey = %lld, nZero = %d] [pData = %p, nData = %d]\n", pKey, nKey, nZero, pData, nData);
-        { size_t i; for(i = 0; i < nKey; i++) fprintf(stderr, " %02x", ((const uint8_t *) pKey)[i]); fprintf(stderr, "\n"); }
+        fprintf(stderr, RED "UNIMPLEMENTED TOILET APPEND [pKey = %p, nKey = %lld, nZero = %d] [pData = %p, nData = %d]\n", pKey, nKey, nZero, pData, nData);
+        { size_t i; for(i = 0; i < nKey; i++) fprintf(stderr, " %02x", ((const uint8_t *) pKey)[i]); fprintf(stderr, "\n" GRAY); }
       }else{
         /* insertion doesn't use pCur->toilet.row */
         t_row *row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
@@ -6532,7 +6604,11 @@ int sqlite3BtreeCreateTable(Btree *p, int *piTable, int flags){
     toilet_row_set_value(flag_row, "flags", T_INT, &value);
     toilet_put_row(flag_row);
     /* create the table itself */
-    toilet_new_gtable(p->pBt->toilet.db, number);
+    if(flags & BTREE_INTKEY){
+      toilet_new_gtable(p->pBt->toilet.db, number);
+    }else{
+      toilet_new_gtable_blobkey(p->pBt->toilet.db, number);
+    }
   }
 #endif
   Tprintf("\"%s\", *%d, 0x%X", sqlite3BtreeGetFilename(p), *piTable, flags);
@@ -6796,7 +6872,7 @@ int sqlite3BtreeGetMeta(Btree *p, int idx, u32 *pMeta){
     const char name[2] = {"0123456789ABCDEF"[idx], 0};
     const t_value * value = toilet_row_value(pBt->toilet.meta, name, T_INT);
     if( value->v_int != *pMeta ){
-      fprintf(stderr, "META ERROR [%d \"%s\"] %d != (toilet) %d\n", idx, name, *pMeta, value->v_int);
+      fprintf(stderr, RED "META ERROR [%d \"%s\"] %d != (toilet) %d\n" GRAY, idx, name, *pMeta, value->v_int);
     }
   }
 #endif
@@ -6873,7 +6949,7 @@ int sqlite3BtreeFlags(BtCursor *pCur){
   if( pCur->toilet.table && pPage ){
     /* NOTE: 0x8 is random, 0x7 is 0x5 (intkey+leafdata) for tables and 0x2 (zerodata) for indices: these were the flags to CreateTable! */
     if( (pPage->aData[pPage->hdrOffset] & 0x7) != pCur->toilet.flags ){
-      fprintf(stderr, "ERROR \"\":%d flags 0x%X != (toilet) 0x%X\n", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->toilet.flags);
+      fprintf(stderr, RED "ERROR \"\":%d flags 0x%X != (toilet) 0x%X\n" GRAY, pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->toilet.flags);
     }
   }
 #endif
