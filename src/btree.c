@@ -6290,13 +6290,18 @@ int sqlite3BtreeInsert(
     moveToRoot(pCur);
 #if HAVE_TOILET
     if( pCur->toilet.table ){
-      if( pKey || nKey > UINT_MAX || nZero ){
-        /* XXX FIXME */
-        fprintf(stderr, RED "UNIMPLEMENTED TOILET APPEND [pKey = %p, nKey = %lld, nZero = %d] [pData = %p, nData = %d]\n", pKey, nKey, nZero, pData, nData);
-        { size_t i; for(i = 0; i < nKey; i++) fprintf(stderr, " %02x", ((const uint8_t *) pKey)[i]); fprintf(stderr, "\n" GRAY); }
+      if( nKey > UINT_MAX || nZero ){
+        fprintf(stderr, RED "UNIMPLEMENTED TOILET APPEND (nKey = %lld, nZero = %d)\n", nKey, nZero);
       }else{
+        t_row *row;
         /* insertion doesn't use pCur->toilet.row */
-        t_row *row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          assert(!pKey);
+          row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
+        }else{
+          assert(pKey);
+          row = toilet_get_row_blobkey(pCur->toilet.table, pKey, nKey);
+        }
         if( row ){
           if( pData ){
             const t_value value = {v_blob: {length: nData, data: (void *) pData}};
