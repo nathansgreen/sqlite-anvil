@@ -655,9 +655,9 @@ int sqlite3VdbeMemSetStr(
 /*
 ** Compare the values contained by the two memory cells, returning
 ** negative, zero or positive if pMem1 is less than, equal to, or greater
-** than pMem2. Sorting order is NULL's first, followed by numbers (integers
+** than pMem2. Sorting order is NULLs first, followed by numbers (integers
 ** and reals) sorted numerically, followed by text ordered by the collating
-** sequence pColl and finally blob's ordered by memcmp().
+** sequence pColl and finally blobs ordered by memcmp().
 **
 ** Two NULL values are considered equal by this function.
 */
