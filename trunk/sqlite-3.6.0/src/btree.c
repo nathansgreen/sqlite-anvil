@@ -17,6 +17,7 @@
 */
 #include <limits.h>
 #include "btreeInt.h"
+#include "vdbeInt.h"
 
 #define RED "\e[1m\e[31m"
 #define GREEN "\e[1m\e[32m"
@@ -2971,6 +2972,10 @@ int sqlite3BtreeCursor(
         snprintf(number, sizeof(number), "%u", iTable);
         pCur->toilet.table = toilet_get_gtable(p->pBt->toilet.db, number);
         if( pCur->toilet.table ){
+          if( toilet_gtable_blobcmp_name(pCur->toilet.table) ){
+            printf(RED "DEBUG: need blobcmp: %s\n" GRAY, toilet_gtable_blobcmp_name(pCur->toilet.table));
+          }
+          pCur->toilet.blobcmp = NULL;
           pCur->toilet.cursor = toilet_gtable_cursor(pCur->toilet.table);
           if( pCur->toilet.cursor ){
             pCur->toilet.row = NULL;
@@ -3008,6 +3013,9 @@ int sqlite3BtreeCloseCursor(BtCursor *pCur){
     if( pCur->toilet.table ){
       if( pCur->toilet.row ){
         toilet_put_row(pCur->toilet.row);
+      }
+      if( pCur->toilet.blobcmp ){
+        toilet_blobcmp_release(&pCur->toilet.blobcmp);
       }
       toilet_close_cursor(pCur->toilet.cursor);
       toilet_put_gtable(pCur->toilet.table);
@@ -3131,7 +3139,7 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
     if( pCur->toilet.table ){
       if( !toilet_cursor_valid(pCur->toilet.cursor) ){
         if( *pSize ){
-          fprintf(stderr, RED "KEY ERROR %d != (toilet) 0\n" GRAY, *pSize);
+          fprintf(stderr, RED "KEY ERROR %d != (toilet) [invalid]\n" GRAY, *pSize);
         }
       }else{
         if( pCur->toilet.flags & BTREE_INTKEY ){
@@ -3990,6 +3998,12 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
   return rc;
 }
 
+#if HAVE_TOILET
+static int toilet_wrap_vdbe_record_compare(const void *pKey1, size_t nKey1, void *user){
+  UnpackedRecord *pPKey2 = (UnpackedRecord *) user;
+  return sqlite3VdbeRecordCompare(nKey1, pKey1, pPKey2);
+}
+#endif
 /* Move the cursor so that it points to an entry near the key 
 ** specified by pKey/nKey/pUnKey. Return a success code.
 **
@@ -4202,12 +4216,16 @@ moveto_finish:
           }else{
             t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
             if( nKey < id ){
-              if( *pRes <= 0){
+              if( *pRes <= 0 ){
                 fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1\n" GRAY, *pRes);
               }
-            }else{
-              if( *pRes >= 0){
+            }else if( nKey > id ){
+              if( *pRes >= 0 ){
                 fprintf(stderr, RED "SEEK ERROR %d != (toilet) -1\n" GRAY, *pRes);
+              }
+            }else{
+              if( *pRes ){
+                fprintf(stderr, RED "SEEK ERROR %d != (toilet) 0\n" GRAY, *pRes);
               }
             }
           }
@@ -4217,38 +4235,54 @@ moveto_finish:
     }else{
       if( pKey ){
         rc = toilet_cursor_seek_blobkey(pCur->toilet.cursor, pKey, nKey);
-        if( rc ){
-          /* found it */
-          rc = SQLITE_OK;
-          if( *pRes ){
-            fprintf(stderr, RED "SEEK ERROR %d != (toilet) 0 [blob]\n" GRAY, *pRes);
+      }else{
+        rc = toilet_cursor_seek_magic(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare, pUnKey);
+      }
+      if( rc ){
+        /* found it */
+        rc = SQLITE_OK;
+        if( *pRes ){
+          fprintf(stderr, RED "SEEK ERROR %d != (toilet) 0 [blob]\n" GRAY, *pRes);
+        }
+      }else{
+        if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+          if( *pRes >= 0 ){
+            fprintf(stderr, RED "SEEK ERROR %d != (toilet) [invalid, blob]\n" GRAY, *pRes);
           }
         }else{
-          if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+          int c;
+          size_t size;
+          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          if( pKey ){
+            if( nKey < size ) {
+              size = nKey;
+            }
+            c = memcmp(key, pKey, size);
+          }else{
+            struct KeyInfo info = *pUnKey->pKeyInfo;
+            UnpackedRecord verify = *pUnKey;
+            verify.pKeyInfo = &info;
+            /* it's not clear why this is not necessary */
+            //info.incrKey = 0;
+            //info.prefixIsEqual = 1;
+            c = sqlite3VdbeRecordCompare(size, key, &verify);
+          }
+          if( c > 0 ){
+            if( *pRes <= 0 ){
+              fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1 [blob]\n" GRAY, *pRes);
+            }
+          }else if( c < 0 ){
             if( *pRes >= 0 ){
-              fprintf(stderr, RED "SEEK ERROR %d != (toilet) [invalid, blob]\n" GRAY, *pRes);
+              fprintf(stderr, RED "SEEK ERROR %d != (toilet) -1 [blob]\n" GRAY, *pRes);
             }
           }else{
-            size_t size;
-            const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-            if( nKey < size )
-              size = nKey;
-            rc = memcmp(key, pKey, size);
-            if( rc > 0 ){
-              if( *pRes <= 0){
-                fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1 [blob]\n" GRAY, *pRes);
-              }
-            }else{
-              if( *pRes >= 0){
-                fprintf(stderr, RED "SEEK ERROR %d != (toilet) -1 [blob]\n" GRAY, *pRes);
-              }
+            if( *pRes ){
+              fprintf(stderr, RED "SEEK ERROR %d != (toilet) 0 [blob]\n" GRAY, *pRes);
             }
           }
         }
-        rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
-      }else{
-        fprintf(stderr, RED "UNIMPLEMENTED TOILET SEEK (!pKey)\n" GRAY);
       }
+      rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
     }
   }
 #endif
@@ -6299,7 +6333,20 @@ int sqlite3BtreeInsert(
           assert(!pKey);
           row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
         }else{
+          int i;
+          char aSpace[200];
+          UnpackedRecord *realKey;
           assert(pKey);
+          realKey = sqlite3VdbeRecordUnpack(pCur->pKeyInfo, nKey, pKey, aSpace, sizeof(aSpace));
+          assert(realKey);
+          printf(RED "DEBUG: nField = %d, keyInfo->nField = %d\n" GRAY, realKey->nField, pCur->pKeyInfo->nField);
+          for(i = 0; i < realKey->nField; i++)
+          {
+            /* MEM_Null, MEM_Str, MEM_Int, MEM_Real, MEM_Blob */
+            /* sqlite3MemCompare() */
+            printf("[%d] flags = %d\n", i, realKey->aMem[i].flags);
+          }
+          sqlite3VdbeDeleteUnpackedRecord(realKey);
           row = toilet_get_row_blobkey(pCur->toilet.table, pKey, nKey);
         }
         if( row ){

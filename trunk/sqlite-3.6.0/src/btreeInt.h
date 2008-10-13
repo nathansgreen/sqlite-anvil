@@ -367,6 +367,7 @@ typedef struct BtToiletCursor BtToiletCursor;
 struct BtToiletCursor {
   int flags;            /* The flags for this table */
   t_gtable *table;      /* The gtable backing this table */
+  t_blobcmp *blobcmp;   /* The blob comparator to use */
   t_cursor *cursor;     /* The toilet cursor */
   t_row *row;           /* The current row or NULL */
   t_row_id fetch_key;   /* Storage returned by sqlite3BtreeKeyFetch() */
