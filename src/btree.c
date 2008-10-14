@@ -21,6 +21,9 @@
 
 #define RED "\e[1m\e[31m"
 #define GREEN "\e[1m\e[32m"
+#define YELLOW "\e[1m\e[33m"
+#define BLUE "\e[1m\e[34m"
+#define CYAN "\e[1m\e[36m"
 #define GRAY "\e[0m"
 #define Tprintf(format, args...) printf(GREEN "%s" GRAY "(" format ")\n", __FUNCTION__, ##args)
 
@@ -311,7 +314,7 @@ static int saveCursorPosition(BtCursor *pCur){
   ** table, then malloc space for and store the pCur->nKey bytes of key 
   ** data.
   */
-  if( rc==SQLITE_OK && 0==pCur->pPage->intKey){
+  if( rc==SQLITE_OK && 0==pCur->pPage->intKey ){
     void *pKey = sqlite3Malloc(pCur->nKey);
     if( pKey ){
       rc = sqlite3BtreeKey(pCur, 0, pCur->nKey, pKey);
@@ -1288,7 +1291,7 @@ int sqlite3BtreeOpen(
       pBt->toilet.db = toilet_open(toilet_name, stderr);
       if( !pBt->toilet.db && errno == ENOENT && ((flags & BTREE_CREATE) || (vfsFlags & SQLITE_OPEN_CREATE)) ){
         rc = toilet_new(toilet_name);
-        if( rc < 0 ) {
+        if( rc < 0 ){
           rc = SQLITE_ERROR;
           free(toilet_name);
           goto btree_open_out;
@@ -2947,6 +2950,26 @@ create_cursor_exception:
   unlockBtreeIfUnused(pBt);
   return rc;
 }
+#if HAVE_TOILET
+static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user){
+  int i;
+  struct KeyInfo *pKeyInfo = (struct KeyInfo *) user;
+  char aSpace[200];
+  UnpackedRecord *key2;
+  key2 = sqlite3VdbeRecordUnpack(pKeyInfo, s2, b2, aSpace, sizeof(aSpace));
+  assert(key2);
+  printf(CYAN "DEBUG: comparing, nField = %d, keyInfo->nField = %d\n" GRAY, key2->nField, pKeyInfo->nField);
+  for(i = 0; i < key2->nField; i++)
+  {
+    /* MEM_Null, MEM_Str, MEM_Int, MEM_Real, MEM_Blob */
+    /* sqlite3MemCompare() */
+    printf(CYAN "[%d] flags = %d\n" GRAY, i, key2->aMem[i].flags);
+  }
+  i = sqlite3VdbeRecordCompare(s1, b1, key2);
+  sqlite3VdbeDeleteUnpackedRecord(key2);
+  return i;
+}
+#endif
 int sqlite3BtreeCursor(
   Btree *p,                                   /* The btree */
   int iTable,                                 /* Root page of table to open */
@@ -2972,10 +2995,35 @@ int sqlite3BtreeCursor(
         snprintf(number, sizeof(number), "%u", iTable);
         pCur->toilet.table = toilet_get_gtable(p->pBt->toilet.db, number);
         if( pCur->toilet.table ){
-          if( toilet_gtable_blobcmp_name(pCur->toilet.table) ){
-            printf(RED "DEBUG: need blobcmp: %s\n" GRAY, toilet_gtable_blobcmp_name(pCur->toilet.table));
+          if( !(pCur->toilet.flags & BTREE_INTKEY) ){
+            /* whether or not toilet thinks it will need a
+             * blob comparator, we know we will need one */
+            printf(YELLOW "DEBUG: need blobcmp: %s\n" GRAY, toilet_gtable_blobcmp_name(pCur->toilet.table));
+            /* copy the KeyInfo structure */
+            size_t nField = pKeyInfo->nField;
+            size_t nByte = sizeof(*pKeyInfo) + (nField - 1) * sizeof(pKeyInfo->aColl[0]);
+            struct KeyInfo *copy = malloc(pKeyInfo->aSortOrder ? (nByte + nField) : nByte);
+            if( copy ){
+              memcpy(copy, pKeyInfo, nByte);
+              if( pKeyInfo->aSortOrder ){
+                copy->aSortOrder = (uint8_t *) &copy->aColl[nField];
+                memcpy(copy->aSortOrder, pKeyInfo->aSortOrder, nField);
+              }
+            }else{
+              /* XXX fail */
+              assert(copy);
+            }
+            pCur->toilet.blobcmp = toilet_new_blobcmp("sqlite3VdbeRecordCompare", toilet_wrap_vdbe_record_compare_1, copy, NULL, true);
+            if( toilet_gtable_set_blobcmp(pCur->toilet.table, pCur->toilet.blobcmp) >= 0 ){
+              toilet_blobcmp_retain(pCur->toilet.blobcmp);
+            }else{
+              toilet_blobcmp_release(&pCur->toilet.blobcmp);
+              /* XXX fail */
+              assert(0);
+            }
+          }else{
+            pCur->toilet.blobcmp = NULL;
           }
-          pCur->toilet.blobcmp = NULL;
           pCur->toilet.cursor = toilet_gtable_cursor(pCur->toilet.table);
           if( pCur->toilet.cursor ){
             pCur->toilet.row = NULL;
@@ -3192,7 +3240,7 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
           if( *pSize ){
             fprintf(stderr, RED "SIZE ERROR %d != (toilet) 0\n" GRAY, *pSize);
           }
-        }else if(pCur->toilet.flags & BTREE_INTKEY ){
+        }else if( pCur->toilet.flags & BTREE_INTKEY ){
           t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
           pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
         }else{
@@ -3999,7 +4047,7 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
 }
 
 #if HAVE_TOILET
-static int toilet_wrap_vdbe_record_compare(const void *pKey1, size_t nKey1, void *user){
+static int toilet_wrap_vdbe_record_compare_2(const void *pKey1, size_t nKey1, void *user){
   UnpackedRecord *pPKey2 = (UnpackedRecord *) user;
   return sqlite3VdbeRecordCompare(nKey1, pKey1, pPKey2);
 }
@@ -4233,11 +4281,7 @@ moveto_finish:
         rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
       }
     }else{
-      if( pKey ){
-        rc = toilet_cursor_seek_blobkey(pCur->toilet.cursor, pKey, nKey);
-      }else{
-        rc = toilet_cursor_seek_magic(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare, pUnKey);
-      }
+      rc = toilet_cursor_seek_magic(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare_2, pUnKey);
       if( rc ){
         /* found it */
         rc = SQLITE_OK;
@@ -4250,23 +4294,9 @@ moveto_finish:
             fprintf(stderr, RED "SEEK ERROR %d != (toilet) [invalid, blob]\n" GRAY, *pRes);
           }
         }else{
-          int c;
           size_t size;
           const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-          if( pKey ){
-            if( nKey < size ) {
-              size = nKey;
-            }
-            c = memcmp(key, pKey, size);
-          }else{
-            struct KeyInfo info = *pUnKey->pKeyInfo;
-            UnpackedRecord verify = *pUnKey;
-            verify.pKeyInfo = &info;
-            /* it's not clear why this is not necessary */
-            //info.incrKey = 0;
-            //info.prefixIsEqual = 1;
-            c = sqlite3VdbeRecordCompare(size, key, &verify);
-          }
+          int c = sqlite3VdbeRecordCompare(size, key, pUnKey);
           if( c > 0 ){
             if( *pRes <= 0 ){
               fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1 [blob]\n" GRAY, *pRes);
@@ -6330,23 +6360,8 @@ int sqlite3BtreeInsert(
         t_row *row;
         /* insertion doesn't use pCur->toilet.row */
         if( pCur->toilet.flags & BTREE_INTKEY ){
-          assert(!pKey);
           row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
         }else{
-          int i;
-          char aSpace[200];
-          UnpackedRecord *realKey;
-          assert(pKey);
-          realKey = sqlite3VdbeRecordUnpack(pCur->pKeyInfo, nKey, pKey, aSpace, sizeof(aSpace));
-          assert(realKey);
-          printf(RED "DEBUG: nField = %d, keyInfo->nField = %d\n" GRAY, realKey->nField, pCur->pKeyInfo->nField);
-          for(i = 0; i < realKey->nField; i++)
-          {
-            /* MEM_Null, MEM_Str, MEM_Int, MEM_Real, MEM_Blob */
-            /* sqlite3MemCompare() */
-            printf("[%d] flags = %d\n", i, realKey->aMem[i].flags);
-          }
-          sqlite3VdbeDeleteUnpackedRecord(realKey);
           row = toilet_get_row_blobkey(pCur->toilet.table, pKey, nKey);
         }
         if( row ){
@@ -6656,7 +6671,7 @@ int sqlite3BtreeCreateTable(Btree *p, int *piTable, int flags){
     toilet_row_set_value(flag_row, "flags", T_INT, &value);
     toilet_put_row(flag_row);
     /* create the table itself */
-    if(flags & BTREE_INTKEY){
+    if( flags & BTREE_INTKEY ){
       toilet_new_gtable(p->pBt->toilet.db, number);
     }else{
       toilet_new_gtable_blobkey(p->pBt->toilet.db, number);
@@ -7655,7 +7670,7 @@ static int btreeCopyFile(Btree *pTo, Btree *pFrom){
       ** journal file. At this point it would be safe to do anything at
       ** all to the database file except truncate it to zero bytes.
       */
-      if( rc==SQLITE_OK && nFromPageSize<nToPageSize && iSize>iPending){
+      if( rc==SQLITE_OK && nFromPageSize<nToPageSize && iSize>iPending ){
         i64 iOff;
         for(
           iOff=iPending; 
