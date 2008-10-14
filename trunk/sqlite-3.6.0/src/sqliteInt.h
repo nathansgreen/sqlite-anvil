@@ -1009,7 +1009,7 @@ struct KeyInfo {
   u8 incrKey;         /* Increase 2nd key by epsilon before comparison */
   u8 prefixIsEqual;   /* Treat a prefix as equal */
   int nField;         /* Number of entries in aColl[] */
-  u8 *aSortOrder;     /* If defined an aSortOrder[i] is true, sort DESC */
+  u8 *aSortOrder;     /* If defined and aSortOrder[i] is true, sort DESC */
   CollSeq *aColl[1];  /* Collating sequence for each term of the key */
 };
 
