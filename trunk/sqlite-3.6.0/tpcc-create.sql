@@ -95,7 +95,7 @@ CREATE TABLE orders (
   PRIMARY KEY  (o_w_id,o_d_id,o_id)
 );
 
-CREATE INDEX o_w_id ON orders (o_w_id,o_d_id,o_c_id,o_id)
+CREATE INDEX o_w_id ON orders (o_w_id,o_d_id,o_c_id,o_id);
 
 CREATE TABLE stock (
   s_i_id int(11) NOT NULL default '0',
