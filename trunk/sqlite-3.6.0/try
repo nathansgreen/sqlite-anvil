@@ -34,12 +34,18 @@ echo "done."
 
 # Run the sqlite test
 (WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE exec '"$WD/sqlite3"' sql) << EOF
-create table foo (bar int, baz int);
+create table foo (bar int primary key, baz int);
 .explain on
-explain insert into foo (bar, baz) values (1, 2);
+explain insert into foo (bar, baz) values (64, 10);
 pragma vdbe_trace=on;
-insert into foo (bar, baz) values (1, 2);
+insert into foo (bar, baz) values (64, 10);
+insert into foo (bar, baz) values (65, 11);
+insert into foo (bar, baz) values (66, 12);
 select * from foo;
+explain select * from foo where bar=65;
+select * from foo where bar=64;
+select * from foo where bar=65;
+select * from foo where bar=66;
 EOF
 ls -lR /mnt/test
 
