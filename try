@@ -49,6 +49,9 @@ select * from foo where bar=66;
 EOF
 ls -lR /mnt/test
 
+# Create the TPCC tables
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE exec '"$WD/sqlite3"' tpcc) < tpcc-create.sql
+
 echo "Unloading Featherstitch..."
 sudo umount /mnt/test
 time sudo rmmod kfstitchd
