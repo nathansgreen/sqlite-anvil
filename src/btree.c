@@ -2952,22 +2952,14 @@ create_cursor_exception:
 }
 #if HAVE_TOILET
 static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user){
-  int i;
-  struct KeyInfo *pKeyInfo = (struct KeyInfo *) user;
+  int c;
   char aSpace[200];
-  UnpackedRecord *key2;
-  key2 = sqlite3VdbeRecordUnpack(pKeyInfo, s2, b2, aSpace, sizeof(aSpace));
+  struct KeyInfo *pKeyInfo = (struct KeyInfo *) user;
+  UnpackedRecord *key2 = sqlite3VdbeRecordUnpack(pKeyInfo, s2, b2, aSpace, sizeof(aSpace));
   assert(key2);
-  printf(CYAN "DEBUG: comparing, nField = %d, keyInfo->nField = %d\n" GRAY, key2->nField, pKeyInfo->nField);
-  for(i = 0; i < key2->nField; i++)
-  {
-    /* MEM_Null, MEM_Str, MEM_Int, MEM_Real, MEM_Blob */
-    /* sqlite3MemCompare() */
-    printf(CYAN "[%d] flags = %d\n" GRAY, i, key2->aMem[i].flags);
-  }
-  i = sqlite3VdbeRecordCompare(s1, b1, key2);
+  c = sqlite3VdbeRecordCompare(s1, b1, key2);
   sqlite3VdbeDeleteUnpackedRecord(key2);
-  return i;
+  return c;
 }
 #endif
 int sqlite3BtreeCursor(
@@ -2998,7 +2990,7 @@ int sqlite3BtreeCursor(
           if( !(pCur->toilet.flags & BTREE_INTKEY) ){
             /* whether or not toilet thinks it will need a
              * blob comparator, we know we will need one */
-            printf(YELLOW "DEBUG: need blobcmp: %s\n" GRAY, toilet_gtable_blobcmp_name(pCur->toilet.table));
+            printf(CYAN "DEBUG: need blobcmp: %s\n" GRAY, toilet_gtable_blobcmp_name(pCur->toilet.table));
             /* copy the KeyInfo structure */
             size_t nField = pKeyInfo->nField;
             size_t nByte = sizeof(*pKeyInfo) + (nField - 1) * sizeof(pKeyInfo->aColl[0]);
@@ -4263,6 +4255,20 @@ moveto_finish:
             }
           }else{
             t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+            if( *pRes < 0 && id >= nKey ){
+              /* THIS IS A HACK */
+              /* The default btree code is lazy, and won't find the actual key in
+               * many cases. Instead, it only finds the leaf page that would
+               * contain the key, if it existed - even if it does exist. The
+               * cursor seems to be left pointing at the first entry of that page,
+               * which will be less than (or equal to) the requested key. So we
+               * move the toilet cursor backwards to find the same entry, even
+               * though this is not really necessary. Later when we are not
+               * comparing every result to the original btree code we can stop. */
+              fprintf(stderr, YELLOW "%s(): toilet matching btree laziness with horrible hack\n" GRAY, __FUNCTION__);
+              toilet_cursor_seek(pCur->toilet.cursor, pCur->info.nKey);
+              id = toilet_cursor_row_id(pCur->toilet.cursor);
+            }
             if( nKey < id ){
               if( *pRes <= 0 ){
                 fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1\n" GRAY, *pRes);
@@ -4297,6 +4303,29 @@ moveto_finish:
           size_t size;
           const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
           int c = sqlite3VdbeRecordCompare(size, key, pUnKey);
+          if( *pRes < 0 && c >= 0 ){
+            /* THIS IS A HACK */
+            /* The default btree code is lazy, and won't find the actual key in
+             * many cases. Instead, it only finds the leaf page that would
+             * contain the key, if it existed - even if it does exist. The
+             * cursor seems to be left pointing at the first entry of that page,
+             * which will be less than (or equal to) the requested key. So we
+             * move the toilet cursor backwards to find the same entry, even
+             * though this is not really necessary. Later when we are not
+             * comparing every result to the original btree code we can stop. */
+            int bts;
+            const uint8_t * btk;
+            t_gtable * save = pCur->toilet.table;
+            fprintf(stderr, YELLOW "%s(): toilet matching btree laziness with horrible hack [blob]\n" GRAY, __FUNCTION__);
+            /* temporarily disable toilet processing just to fetch the btree
+             * key, since the btree and toilet cursors are out of sync */
+            pCur->toilet.table = NULL;
+            btk = sqlite3BtreeKeyFetch(pCur, &bts);
+            pCur->toilet.table = save;
+            toilet_cursor_seek_blobkey(pCur->toilet.cursor, btk, bts);
+            key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+            c = sqlite3VdbeRecordCompare(size, key, pUnKey);
+          }
           if( c > 0 ){
             if( *pRes <= 0 ){
               fprintf(stderr, RED "SEEK ERROR %d != (toilet) 1 [blob]\n" GRAY, *pRes);
