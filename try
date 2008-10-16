@@ -47,7 +47,7 @@ select * from foo where bar=64;
 select * from foo where bar=65;
 select * from foo where bar=66;
 EOF
-ls -lR /mnt/test
+find /mnt/test -type f -print0 | xargs -0 ls -l
 
 # Create the TPCC tables
 (WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE exec '"$WD/sqlite3"' tpcc) < tpcc-create.sql
