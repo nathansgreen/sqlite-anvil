@@ -2747,6 +2747,18 @@ int sqlite3BtreeRollback(Btree *p){
   btreeIntegrity(p);
   unlockAllTables(p);
 
+#if HAVE_TOILET
+  if( pBt->toilet.db && IN_TX(pBt->toilet.tx) ){
+    fprintf(stderr, YELLOW "%s(): not rolling back toilet (commit instead)\n" GRAY, __FUNCTION__);
+    rc = TX_END(pBt->toilet.tx);
+    if( rc < 0 ){
+      sqlite3BtreeLeave(p);
+      return SQLITE_INTERNAL;
+    }
+    rc = SQLITE_OK;
+  }
+#endif
+
   if( p->inTrans==TRANS_WRITE ){
     int rc2;
 
