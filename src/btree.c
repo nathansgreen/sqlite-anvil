@@ -3069,7 +3069,9 @@ int sqlite3BtreeCloseCursor(BtCursor *pCur){
       if( pCur->toilet.blobcmp ){
         toilet_blobcmp_release(&pCur->toilet.blobcmp);
       }
-      toilet_close_cursor(pCur->toilet.cursor);
+      if( pCur->toilet.cursor ){
+        toilet_close_cursor(pCur->toilet.cursor);
+      }
       toilet_put_gtable(pCur->toilet.table);
     }
 #endif
@@ -3242,7 +3244,7 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
       if( !pCur->toilet.row ){
         if( !toilet_cursor_valid(pCur->toilet.cursor) ){
           if( *pSize ){
-            fprintf(stderr, RED "SIZE ERROR %d != (toilet) 0\n" GRAY, *pSize);
+            fprintf(stderr, RED "SIZE ERROR %d != (toilet) [invalid]\n" GRAY, *pSize);
           }
         }else if( pCur->toilet.flags & BTREE_INTKEY ){
           t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
@@ -3254,10 +3256,16 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
         }
       }
       if( pCur->toilet.row ){
+        if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
+          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+          if( pCur->info.nKey != id && pCur->info.nKey ){
+            fprintf(stderr, RED "%s(): btree key is %u; toilet key is %u\n" GRAY, __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+          }
+        }
         value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
         if( value ){
           if( *pSize != value->v_blob.length ){
-            fprintf(stderr, RED "SIZE ERROR %d != (toilet) %d\n" GRAY, *pSize, value->v_blob.length);
+            fprintf(stderr, RED "SIZE ERROR %d != (toilet) %d [blob]\n" GRAY, *pSize, value->v_blob.length);
           }
         }else{
           value = toilet_row_value(pCur->toilet.row, "int", T_INT);
@@ -3716,7 +3724,7 @@ static const unsigned char *fetchPayload(
 ** Hence, a mutex on the BtShared should be held prior to calling
 ** this routine.
 **
-** These routines is used to get quick access to key and data
+** These routines are used to get quick access to key and data
 ** in the common case where no overflow pages are used.
 */
 const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
@@ -3730,8 +3738,9 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
         const void *key;
         if( pCur->toilet.flags & BTREE_INTKEY ){
           pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
-          if( *pAmt != sizeof(pCur->toilet.fetch_key) ){
-            fprintf(stderr, RED "WHOA: key size (%d) != *pAmt (%d)!\n" GRAY, sizeof(pCur->toilet.fetch_key), *pAmt);
+          if( *pAmt != sizeof(pCur->toilet.fetch_key) && *pAmt ){
+            /* apparently (see fetchPayload() above), *pAmt will always be 0 for integer key tables */
+            fprintf(stderr, YELLOW "WHOA: key size (%d) != *pAmt (%d)!\n" GRAY, sizeof(pCur->toilet.fetch_key), *pAmt);
           }
           /* endianness? */
           key = &pCur->toilet.fetch_key;
@@ -4011,6 +4020,23 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
       rc = moveToLeftmost(pCur);
     }
   }
+#if HAVE_TOILET
+  if( pCur->toilet.table ){
+    if( pCur->toilet.row ){
+      toilet_put_row(pCur->toilet.row);
+      pCur->toilet.row = NULL;
+    }
+    toilet_close_cursor(pCur->toilet.cursor);
+    pCur->toilet.cursor = toilet_gtable_cursor(pCur->toilet.table);
+    /* FIXME: check return value, etc. */
+    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
+      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+      if( pCur->info.nKey != id && pCur->info.nKey ){
+        fprintf(stderr, RED "%s(): btree key is %u; toilet key is %u\n" GRAY, __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+      }
+    }
+  }
+#endif
   return rc;
 }
 
@@ -4045,6 +4071,12 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
     }
     toilet_cursor_last(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
+    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
+      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+      if( pCur->info.nKey != id && pCur->info.nKey ){
+        fprintf(stderr, RED "%s(): btree key is %u; toilet key is %u\n" GRAY, __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+      }
+    }
   }
 #endif
   return rc;
@@ -4428,6 +4460,12 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
       toilet_put_row(pCur->toilet.row);
       pCur->toilet.row = NULL;
     }
+    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
+      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+      if( pCur->info.nKey != id && pCur->info.nKey ){
+        fprintf(stderr, RED "%s(): btree key is %u; toilet key is %u\n" GRAY, __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+      }
+    }
     toilet_cursor_next(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
   }
@@ -4454,7 +4492,15 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
     }while( pCur->idx>=pPage->nCell );
     *pRes = 0;
     if( pPage->leafData ){
+#if HAVE_TOILET
+      t_gtable *save = pCur->toilet.table;
+      /* disable toilet for the recursive call to keep the cursors in sync */
+      pCur->toilet.table = NULL;
+#endif
       rc = sqlite3BtreeNext(pCur, pRes);
+#if HAVE_TOILET
+      pCur->toilet.table = save;
+#endif
     }else{
       rc = SQLITE_OK;
     }
@@ -4504,6 +4550,12 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
       toilet_put_row(pCur->toilet.row);
       pCur->toilet.row = NULL;
     }
+    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
+      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+      if( pCur->info.nKey != id && pCur->info.nKey ){
+        fprintf(stderr, RED "%s(): btree key is %u; toilet key is %u\n" GRAY, __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+      }
+    }
     toilet_cursor_prev(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
   }
@@ -4532,7 +4584,15 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
     pCur->info.nSize = 0;
     pCur->validNKey = 0;
     if( pPage->leafData && !pPage->leaf ){
+#if HAVE_TOILET
+      t_gtable *save = pCur->toilet.table;
+      /* disable toilet for the recursive call to keep the cursors in sync */
+      pCur->toilet.table = NULL;
+#endif
       rc = sqlite3BtreePrevious(pCur, pRes);
+#if HAVE_TOILET
+      pCur->toilet.table = save;
+#endif
     }else{
       rc = SQLITE_OK;
     }
