@@ -2,8 +2,10 @@
 
 make || exit $?
 
-# Uncomment to enable patchgroup traces on the test
-#TRACE="PATCHGROUP_TRACE=sqlite.pgt"
+# Uncomment to enable patchgroup traces on the tests
+#TRACE_TEST="PATCHGROUP_TRACE=test.pgt"
+#TRACE_TPCC="PATCHGROUP_TRACE=tpcc.pgt"
+#TRACE_DBT2="PATCHGROUP_TRACE=dbt2.pgt"
 
 HOST="`hostname`"
 if [ "${HOST#kudos-}" == "$HOST" -a "$HOST" != "execl" ]
@@ -33,7 +35,7 @@ sudo mount /mnt/test
 echo "done."
 
 # Run the sqlite test
-(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE exec '"$WD/sqlite3"' sql) << EOF
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TEST exec '"$WD/sqlite3"' sql-test) << EOF
 create table foo (bar int primary key, baz int);
 .explain on
 explain insert into foo (bar, baz) values (64, 10);
@@ -50,7 +52,20 @@ EOF
 find /mnt/test -type f -print0 | xargs -0 ls -l
 
 # Create the TPCC tables
-(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE exec '"$WD/sqlite3"' tpcc) < tpcc-create.sql
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TPCC exec '"$WD/sqlite3"' tpcc-empty) < tpcc-create.sql
+find /mnt/test -type f -print0 | xargs -0 ls -l
+
+# Run DBT2
+if [ -d dbt2/ ]
+then
+	DBT2_TMP=/tmp/dbt2-sqlite.$$
+	BUILD_DB=dbt2/scripts/sqlite/build_db.sh
+	echo "Running DBT2..."
+	mkdir $DBT2_TMP
+	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_DBT2 exec '"$WD/$BUILD_DB"' -d sql-dbt2 -f $DBT2_TMP -g -w 1)
+	rm -rf $DBT2_TMP
+	find /mnt/test -type f -print0 | xargs -0 ls -l
+fi
 
 echo "Unloading Featherstitch..."
 sudo umount /mnt/test
