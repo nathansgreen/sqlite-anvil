@@ -3009,6 +3009,11 @@ int sqlite3BtreeCursor(
             struct KeyInfo *copy = malloc(pKeyInfo->aSortOrder ? (nByte + nField) : nByte);
             if( copy ){
               memcpy(copy, pKeyInfo, nByte);
+              if( !copy->enc ){
+                /* er... where would we get this, I wonder? */
+                printf(YELLOW "No string encoding specified, assuming UTF8.\n" GRAY);
+                copy->enc = SQLITE_UTF8;
+              }
               if( pKeyInfo->aSortOrder ){
                 copy->aSortOrder = (uint8_t *) &copy->aColl[nField];
                 memcpy(copy->aSortOrder, pKeyInfo->aSortOrder, nField);

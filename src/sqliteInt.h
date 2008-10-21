@@ -1005,7 +1005,7 @@ struct FKey {
 */
 struct KeyInfo {
   sqlite3 *db;        /* The database connection */
-  u8 enc;             /* Text encoding - one of the TEXT_Utf* values */
+  u8 enc;             /* Text encoding - one of the SQLITE_UTF* values */
   u8 incrKey;         /* Increase 2nd key by epsilon before comparison */
   u8 prefixIsEqual;   /* Treat a prefix as equal */
   int nField;         /* Number of entries in aColl[] */
