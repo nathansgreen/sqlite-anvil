@@ -1988,6 +1988,7 @@ int main(int argc, char **argv){
   }
 #endif
 
+#if !HAVE_TOILET
   /* Go ahead and open the database file if it already exists.  If the
   ** file does not exist, delay opening it.  This prevents empty database
   ** files from being created if a user mistypes the database name argument
@@ -1996,6 +1997,7 @@ int main(int argc, char **argv){
   if( access(data.zDbFilename, 0)==0 ){
     open_db(&data);
   }
+#endif
 
   /* Process the initialization file if there is one.  If no -init option
   ** is given on the command line, look for a file named ~/.sqliterc and
