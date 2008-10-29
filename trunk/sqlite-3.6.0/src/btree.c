@@ -1319,7 +1319,7 @@ int sqlite3BtreeOpen(
       goto btree_open_out;
     }
 #if HAVE_TOILET
-    if( 1 /* flags & BTREE_TOILET */){
+    if( flags & BTREE_TOILET ){
       int i, fresh = 0;
       /* XXX HACK */
       char * toilet_name = malloc(strlen(zFilename) + 8);
@@ -1654,7 +1654,7 @@ int sqlite3BtreeClose(Btree *p){
 ** The maximum number of cache pages is set to the absolute
 ** value of mxPage.  If mxPage is negative, the pager will
 ** operate asynchronously - it will not stop to do fsync()s
-** to insure data is written to the disk surface before
+** to ensure data is written to the disk surface before
 ** continuing.  Transactions still work if synchronous is off,
 ** and the database cannot be corrupted if this program
 ** crashes.  But if the operating system crashes or there is
@@ -3001,7 +3001,7 @@ create_cursor_exception:
   return rc;
 }
 #if HAVE_TOILET
-static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user){
+static int toilet_wrap_vdbe_record_compare_1(const void *b1, size_t s1, const void *b2, size_t s2, void *user){
   int c;
   char aSpace[200];
   struct KeyInfo *pKeyInfo = (struct KeyInfo *) user;
@@ -6511,11 +6511,11 @@ int sqlite3BtreeInsert(
         if( row ){
           if( pData ){
             const t_value value = {v_blob: {length: nData, data: (void *) pData}};
-            rc = toilet_row_set_value(row, "blob", T_BLOB, &value);
+            rc = toilet_row_set_value_hint(row, "blob", T_BLOB, &value, appendBias ? true : false);
             toilet_row_remove_key(row, "int");
           }else{
             const t_value value = {v_int: nData};
-            rc = toilet_row_set_value(row, "int", T_INT, &value);
+            rc = toilet_row_set_value_hint(row, "int", T_INT, &value, appendBias ? true : false);
             toilet_row_remove_key(row, "blob");
           }
           toilet_put_row(row);
