@@ -976,6 +976,13 @@ int sqlite3BtreeFactory(
   if( db->flags & SQLITE_NoReadlock ){
     btFlags |= BTREE_NO_READLOCK;
   }
+#if HAVE_TOILET
+  if( db->openFlags & SQLITE_OPEN_TOILET ){
+    btFlags |= BTREE_TOILET;
+    /* lower layers can't deal with this flag */
+    vfsFlags &= ~SQLITE_OPEN_TOILET;
+  }
+#endif
   if( zFilename==0 ){
 #if SQLITE_TEMP_STORE==0
     /* Do nothing */
@@ -1465,6 +1472,9 @@ int sqlite3_open(
   sqlite3 **ppDb 
 ){
   return openDatabase(zFilename, ppDb,
+#if HAVE_TOILET
+                      SQLITE_OPEN_TOILET |
+#endif
                       SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0);
 }
 int sqlite3_open_v2(

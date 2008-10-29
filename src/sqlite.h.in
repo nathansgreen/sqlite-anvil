@@ -513,6 +513,7 @@ int sqlite3_exec(
 #define SQLITE_OPEN_SUBJOURNAL       0x00002000
 #define SQLITE_OPEN_MASTER_JOURNAL   0x00004000
 #define SQLITE_OPEN_NOMUTEX          0x00008000
+#define SQLITE_OPEN_TOILET           0x40000000
 
 /*
 ** CAPI3REF: Device Characteristics {F10240}

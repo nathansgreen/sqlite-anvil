@@ -119,6 +119,13 @@ static int bail_on_error = 0;
 */
 static int stdin_is_interactive = 1;
 
+#if HAVE_TOILET
+/*
+** Use toilet for data storage instead of btree files.
+*/
+static int use_toilet = 1;
+#endif
+
 /*
 ** The following is the open SQLite database.  We make a pointer
 ** to this database a static variable so that it can be accessed
@@ -953,7 +960,15 @@ static int process_input(struct callback_data *p, FILE *in);
 */
 static void open_db(struct callback_data *p){
   if( p->db==0 ){
+#if HAVE_TOILET
+    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    if( use_toilet ){
+      flags |= SQLITE_OPEN_TOILET;
+    }
+    sqlite3_open_v2(p->zDbFilename, &p->db, flags, NULL);
+#else
     sqlite3_open(p->zDbFilename, &p->db);
+#endif
     db = p->db;
     if( db && sqlite3_errcode(db)==SQLITE_OK ){
       sqlite3_create_function(db, "shellstatic", 0, SQLITE_UTF8, 0,
@@ -1876,6 +1891,9 @@ static const char zOptions[] =
   "   -bail                stop after hitting an error\n"
   "   -interactive         force interactive I/O\n"
   "   -batch               force batch I/O\n"
+#if HAVE_TOILET
+  "   -notoilet            disable toilet mode\n"
+#endif
   "   -column              set output mode to 'column'\n"
   "   -csv                 set output mode to 'csv'\n"
   "   -html                set output mode to HTML\n"
@@ -2029,6 +2047,10 @@ int main(int argc, char **argv){
       stdin_is_interactive = 1;
     }else if( strcmp(z,"-batch")==0 ){
       stdin_is_interactive = 0;
+#if HAVE_TOILET
+    }else if( strcmp(z,"-notoilet")==0 ){
+      use_toilet = 0;
+#endif
     }else if( strcmp(z,"-help")==0 || strcmp(z, "--help")==0 ){
       usage(1);
     }else{
