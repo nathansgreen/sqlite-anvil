@@ -7,6 +7,9 @@ make || exit $?
 #TRACE_TPCC="PATCHGROUP_TRACE=tpcc.pgt"
 #TRACE_DBT2="PATCHGROUP_TRACE=dbt2.pgt"
 
+# Uncomment to enable oprofile
+#OPROFILE=oprofile
+
 HOST="`hostname`"
 if [ "${HOST#kudos-}" == "$HOST" -a "$HOST" != "execl" ]
 then
@@ -60,9 +63,24 @@ if [ -d dbt2/ ]
 then
 	DBT2_TMP=/tmp/dbt2-sqlite.$$
 	BUILD_DB=dbt2/scripts/sqlite/build_db.sh
+	# Use -t to disable toilet mode; requires a patched dbt2
+	#TOILET=-t
 	echo "Running DBT2..."
 	mkdir $DBT2_TMP
-	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_DBT2 exec '"$WD/$BUILD_DB"' -d sql-dbt2 -f $DBT2_TMP -g -w 1)
+	if [ "$OPROFILE" ]
+	then
+		sudo opcontrol --init
+		sudo opcontrol --reset
+		sudo opcontrol "--vmlinux=/usr/src/linux-`uname -r`/vmlinux"
+		sudo opcontrol --start
+	fi
+	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_DBT2 exec '"$WD/$BUILD_DB"' $TOILET -d sql-dbt2 -f $DBT2_TMP -g -w 1)
+	if [ "$OPROFILE" ]
+	then
+		sudo opcontrol --shutdown
+		sudo opcontrol --deinit
+		opreport --symbols .libs/lt-sqlite3 > "$OPROFILE"
+	fi
 	rm -rf $DBT2_TMP
 	find /mnt/test -type f -print0 | xargs -0 ls -l
 fi
