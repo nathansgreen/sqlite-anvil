@@ -4069,8 +4069,7 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
       toilet_put_row(pCur->toilet.row);
       pCur->toilet.row = NULL;
     }
-    toilet_close_cursor(pCur->toilet.cursor);
-    pCur->toilet.cursor = toilet_gtable_cursor(pCur->toilet.table);
+    toilet_cursor_first(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
     if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
       t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);

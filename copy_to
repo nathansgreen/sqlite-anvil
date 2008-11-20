@@ -26,6 +26,9 @@ fi
 
 rsync --rsh=ssh -vaSz --exclude=*.o --exclude=/.target_source \
 	--exclude=/*.lo --exclude=/*.la --exclude=/sqlite3.c \
+	--exclude=/autom4te.cache --exclude=/config.log \
+	--exclude=/config.status --exclude=/configure \
+	--exclude=/Makefile --exclude=/libtool --exclude=/sqlite3.pc \
 	--exclude=/sqlite3 --exclude=/libsqlite3.la \
 	--exclude=/sqlite3.h --exclude=/opcodes.* --exclude=/tags \
 	--exclude=/.libs/ --exclude=/.deps/ --exclude=/test.db \
