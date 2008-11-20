@@ -209,7 +209,7 @@
 #include "os.h"
 #include <assert.h>
 #if HAVE_TOILET
-#include <toilet++.h>
+#include <toilet.h>
 #include <transaction.h>
 #endif
 

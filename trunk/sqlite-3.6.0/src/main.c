@@ -27,7 +27,7 @@
 #endif
 
 #if HAVE_TOILET
-#include <toilet++.h>
+#include <toilet.h>
 #endif
 
 /*
