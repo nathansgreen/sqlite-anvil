@@ -209,7 +209,7 @@
 #include "os.h"
 #include <assert.h>
 #if HAVE_TOILET
-#include <toilet.h>
+#include <toilet++.h>
 #include <transaction.h>
 #endif
 
@@ -354,23 +354,28 @@ struct Btree {
 #if HAVE_TOILET
 typedef struct BtToilet BtToilet;
 struct BtToilet {
-  struct tx_handle tx;  /* The transaction handle */
-  t_toilet *db;         /* The main toilet */
-  t_gtable *root;       /* The root gtable */
-  t_row *next;          /* The row storing the next table number (0) */
-  t_row *meta;          /* The row storing meta information (1) */
+  struct tx_handle tx;      /* The transaction handle */
+  int dir_fd;               /* The containing directory */
+  tpp_params *config;       /* The config for dtables */
+  tpp_dtable_cache *cache;  /* The dtable cache */
+  tpp_dtable *root;         /* The root dtable */
+  tpp_dtable *one;          /* The dtable at page 1 */
 };
 
-#define TOILET_FIRST_TABLE_NO 2
+/* next table number and flags 0-15 */
+#define TOILET_ROOT_INFO_ROW   0
+/* first available user table number */
+#define TOILET_FIRST_TABLE_NO  2
+
+#define TOILET_CONFIG_LITERAL(x) #x
 
 typedef struct BtToiletCursor BtToiletCursor;
 struct BtToiletCursor {
-  int flags;            /* The flags for this table */
-  t_gtable *table;      /* The gtable backing this table */
-  t_blobcmp *blobcmp;   /* The blob comparator to use */
-  t_cursor *cursor;     /* The toilet cursor */
-  t_row *row;           /* The current row or NULL */
-  t_row_id fetch_key;   /* Storage returned by sqlite3BtreeKeyFetch() */
+  int flags;                /* The flags for this table */
+  tpp_dtable *dtable;       /* The dtable backing this table */
+  tpp_blobcmp *blobcmp;     /* The blob comparator to use */
+  tpp_dtable_iter *cursor;  /* The toilet iterator ("cursor") */
+  uint32_t fetch_key;       /* Storage returned by sqlite3BtreeKeyFetch() */
 };
 #endif
 
