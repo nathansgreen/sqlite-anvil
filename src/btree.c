@@ -1197,6 +1197,119 @@ static int sqlite3BtreeInvokeBusyHandler(void *pArg, int n){
   return sqlite3InvokeBusyHandler(&pBt->db->busyHandler);
 }
 
+#if HAVE_TOILET
+static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int flags, int vfsFlags)
+{
+  /* all right, screw this idiotic indenting style, I'm using mine */
+  int r, i, fresh = 0;
+  /* XXX HACK */
+  char * toilet_name = malloc(strlen(zFilename) + 8);
+  strcpy(toilet_name, zFilename);
+  strcat(toilet_name, ".toilet");
+  TX_HANDLE_INIT(pBt->toilet.tx);
+  pBt->toilet.dir_fd = open(toilet_name, 0);
+  if(pBt->toilet.dir_fd < 0)
+  {
+    if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
+      goto fail_free;
+    r = mkdir(toilet_name, 0775);
+    if(r < 0)
+      goto fail_free;
+    pBt->toilet.dir_fd = open(toilet_name, 0);
+    if(pBt->toilet.dir_fd < 0)
+    {
+    fail_free:
+      free(toilet_name);
+      return -1;
+    }
+  }
+  free(toilet_name);
+  
+  pBt->toilet.config = tpp_params_new();
+  if(!pBt->toilet.config)
+    goto fail_close;
+  /* should we use ustr_dtable here at all? */
+  r = tpp_params_parse(pBt->toilet.config, TOILET_CONFIG_LITERAL(
+    config [
+      "cache_size" int 40000
+      "base" class(dt) managed_dtable
+      "base_config" config [
+        "base" class ustr_dtable
+        "fastbase" class simple_dtable
+      ]
+    ]));
+  if(r < 0)
+    goto fail_params;
+  pBt->toilet.cache = tpp_dtable_cache_new(pBt->toilet.dir_fd, "cache_dtable", pBt->toilet.config);
+  if(!pBt->toilet.cache)
+    goto fail_params;
+  
+  pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0);
+  if(!pBt->toilet.root)
+  {
+    tpp_dtype key;
+    uint32_t value[17];
+    tpp_blob value_blob;
+    if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
+      goto fail_cache;
+    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 0, DT_UINT32);
+    if(r < 0)
+      goto fail_cache;
+    pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0);
+    if(!pBt->toilet.root)
+      goto fail_cache;
+    
+    /* load default values */
+    tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
+    value[0] = TOILET_FIRST_TABLE_NO;
+    for(i = 1; i <= 16; i++)
+      value[i] = 0;
+    r = tpp_blob_new(&value_blob, sizeof(value), &value);
+    if(r < 0)
+      goto fail_root;
+    r = tpp_dtable_insert(pBt->toilet.root, &key, &value_blob, true);
+    tpp_blob_kill(&value_blob);
+    if(r < 0)
+      goto fail_root;
+    
+    tpp_dtype_int(&key, 1);
+    value[0] = BTREE_INTKEY | BTREE_LEAFDATA;
+    r = tpp_blob_new(&value_blob, sizeof(value[0]), &value[0]);
+    if(r < 0)
+      goto fail_root;
+    r = tpp_dtable_insert(pBt->toilet.root, &key, &value_blob, true);
+    tpp_blob_kill(&value_blob);
+    if(r < 0)
+      goto fail_root;
+  }
+  
+  pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1);
+  if(!pBt->toilet.one)
+  {
+    if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
+      goto fail_root;
+    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 1, DT_UINT32);
+    if(r < 0)
+      goto fail_root;
+    pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1);
+    if(!pBt->toilet.one)
+      goto fail_root;
+  }
+  return 0;
+
+fail_root:
+  tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
+fail_cache:
+  tpp_dtable_cache_kill(pBt->toilet.cache);
+fail_params:
+  tpp_params_kill(pBt->toilet.config);
+fail_close:
+  close(pBt->toilet.dir_fd);
+  pBt->toilet.dir_fd = -1;
+  return -1;
+}
+#endif
+
 /*
 ** Open a database file.
 ** 
@@ -1320,83 +1433,14 @@ int sqlite3BtreeOpen(
     }
 #if HAVE_TOILET
     if( flags & BTREE_TOILET ){
-      int i, fresh = 0;
-      /* XXX HACK */
-      char * toilet_name = malloc(strlen(zFilename) + 8);
-      strcpy(toilet_name, zFilename);
-      strcat(toilet_name, ".toilet");
-      TX_HANDLE_INIT(pBt->toilet.tx);
-      pBt->toilet.db = toilet_open(toilet_name, stderr);
-      if( !pBt->toilet.db && errno == ENOENT && ((flags & BTREE_CREATE) || (vfsFlags & SQLITE_OPEN_CREATE)) ){
-        rc = toilet_new(toilet_name);
-        if( rc < 0 ){
-          rc = SQLITE_ERROR;
-          free(toilet_name);
-          goto btree_open_out;
-        }
-        pBt->toilet.db = toilet_open(toilet_name, stderr);
-        free(toilet_name);
-        if( pBt->toilet.db ){
-          rc = toilet_new_gtable(pBt->toilet.db, "root");
-          if( rc < 0 ){
-            rc = SQLITE_INTERNAL;
-            goto btree_open_out;
-          }
-          rc = toilet_new_gtable(pBt->toilet.db, "1");
-          if( rc < 0 ){
-            rc = SQLITE_INTERNAL;
-            goto btree_open_out;
-          }
-          fresh = 1;
-        }
-      }else{
-        free(toilet_name);
-      }
-      if( !pBt->toilet.db || !(pBt->toilet.root = toilet_get_gtable(pBt->toilet.db, "root")) ){
-        rc = SQLITE_ERROR;
-        goto btree_open_out;
-      }
-      pBt->toilet.next = toilet_get_row(pBt->toilet.root, 0);
-      if( !pBt->toilet.next ){
+      int r = sqlite3BtreeOpenToilet(pBt, zFilename, flags, vfsFlags);
+      if( r < 0 ){
         rc = SQLITE_INTERNAL;
         goto btree_open_out;
       }
-      pBt->toilet.meta = toilet_get_row(pBt->toilet.root, 1);
-      if( !pBt->toilet.meta ){
-        rc = SQLITE_INTERNAL;
-        goto btree_open_out;
-      }
-      if( fresh ){
-        t_row *flag_row;
-        t_value value = {v_int: TOILET_FIRST_TABLE_NO};
-        rc = toilet_row_set_value(pBt->toilet.next, "next", T_INT, &value);
-        if( rc < 0 ){
-          rc = SQLITE_ERROR;
-          goto btree_open_out;
-        }
-        value.v_int = 0;
-        for(i=0;i<=15;i++){
-          const char name[2] = {"0123456789ABCDEF"[i], 0};
-          rc = toilet_row_set_value(pBt->toilet.meta, name, T_INT, &value);
-          if( rc < 0 ){
-            rc = SQLITE_ERROR;
-            goto btree_open_out;
-          }
-        }
-        value.v_int = 0x5;
-        flag_row = toilet_get_row(pBt->toilet.root, 1);
-        if( !flag_row ){
-          rc = SQLITE_INTERNAL;
-          goto btree_open_out;
-        }
-        rc = toilet_row_set_value(flag_row, "flags", T_INT, &value);
-        toilet_put_row(flag_row);
-        if( rc < 0 ){
-          rc = SQLITE_ERROR;
-          goto btree_open_out;
-        }
-        rc = SQLITE_OK;
-      }
+    }else{
+      /* this is how we know it's not open */
+      pBt->toilet.dir_fd = -1;
     }
 #endif
     sqlite3PagerSetBusyhandler(pBt->pPager, &pBt->busyHdr);
@@ -1496,16 +1540,13 @@ int sqlite3BtreeOpen(
 btree_open_out:
   if( rc!=SQLITE_OK ){
 #if HAVE_TOILET
-    if( pBt ){
-      if( pBt->toilet.next ){
-        toilet_put_row(pBt->toilet.next);
-      }
-      if( pBt->toilet.root ){
-        toilet_put_gtable(pBt->toilet.root);
-      }
-      if( pBt->toilet.db ){
-        toilet_close(pBt->toilet.db);
-      }
+    if( pBt && pBt->toilet.dir_fd >= 0 ){
+      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
+      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
+      tpp_dtable_cache_kill(pBt->toilet.cache);
+      tpp_params_kill(pBt->toilet.config);
+      close(pBt->toilet.dir_fd);
+      TX_CLEANUP(pBt->toilet.tx);
     }
 #endif
     if( pBt && pBt->pPager ){
@@ -1617,16 +1658,14 @@ int sqlite3BtreeClose(Btree *p){
     */
     assert( !pBt->pCursor );
 #if HAVE_TOILET
-    if( pBt->toilet.next ){
-      toilet_put_row(pBt->toilet.next);
+    if( pBt->toilet.dir_fd >= 0 ){
+      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
+      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
+      tpp_dtable_cache_kill(pBt->toilet.cache);
+      tpp_params_kill(pBt->toilet.config);
+      close(pBt->toilet.dir_fd);
+      TX_CLEANUP(pBt->toilet.tx);
     }
-    if( pBt->toilet.root ){
-      toilet_put_gtable(pBt->toilet.root);
-    }
-    if( pBt->toilet.db ){
-      toilet_close(pBt->toilet.db);
-    }
-    TX_CLEANUP(pBt->toilet.tx);
 #endif
     sqlite3PagerClose(pBt->pPager);
     if( pBt->xFreeSchema && pBt->pSchema ){
@@ -2135,7 +2174,7 @@ int sqlite3BtreeBeginTrans(Btree *p, int wrflag){
 
   if( rc==SQLITE_OK ){
 #if HAVE_TOILET
-    if( pBt->toilet.db ){
+    if( pBt->toilet.dir_fd >= 0 ){
       rc = TX_START(pBt->toilet.tx);
       if( rc < 0 ){
         rc = SQLITE_INTERNAL;
@@ -2613,7 +2652,7 @@ int sqlite3BtreeCommitPhaseOne(Btree *p, const char *zMaster){
     sqlite3BtreeLeave(p);
   }
 #if HAVE_TOILET
-  if( p->pBt->toilet.db && IN_TX(p->pBt->toilet.tx) ){
+  if( p->pBt->toilet.dir_fd >= 0 && IN_TX(p->pBt->toilet.tx) ){
     rc = TX_END(p->pBt->toilet.tx);
     if( rc < 0 ){
       sqlite3BtreeLeave(p);
@@ -2786,7 +2825,7 @@ int sqlite3BtreeRollback(Btree *p){
   unlockAllTables(p);
 
 #if HAVE_TOILET
-  if( pBt->toilet.db && IN_TX(pBt->toilet.tx) ){
+  if( pBt->toilet.dir_fd >= 0 && IN_TX(pBt->toilet.tx) ){
     Yprintf("%s(): not rolling back toilet (commit instead)\n", __FUNCTION__);
     rc = TX_END(pBt->toilet.tx);
     if( rc < 0 ){
@@ -3001,15 +3040,79 @@ create_cursor_exception:
   return rc;
 }
 #if HAVE_TOILET
-static int toilet_wrap_vdbe_record_compare_1(const void *b1, size_t s1, const void *b2, size_t s2, void *user){
+static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user)
+{
   int c;
   char aSpace[200];
-  struct KeyInfo *pKeyInfo = (struct KeyInfo *) user;
-  UnpackedRecord *key2 = sqlite3VdbeRecordUnpack(pKeyInfo, s2, b2, aSpace, sizeof(aSpace));
+  struct KeyInfo * pKeyInfo = (struct KeyInfo *) user;
+  UnpackedRecord * key2 = sqlite3VdbeRecordUnpack(pKeyInfo, s2, b2, aSpace, sizeof(aSpace));
   assert(key2);
   c = sqlite3VdbeRecordCompare(s1, b1, key2);
   sqlite3VdbeDeleteUnpackedRecord(key2);
   return c;
+}
+static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKeyInfo, BtCursor * pCur)
+{
+  int r = -1;
+  tpp_dtype key;
+  tpp_blob value;
+  
+  tpp_dtype_int(&key, iTable);
+  tpp_dtable_find(p->pBt->toilet.root, &key, &value);
+  pCur->toilet.flags = *(int *) tpp_blob_data(&value);
+  
+  pCur->toilet.dtable = tpp_dtable_cache_open(p->pBt->toilet.cache, iTable);
+  if(!pCur->toilet.dtable)
+    return -1;
+  if(!(pCur->toilet.flags & BTREE_INTKEY))
+  {
+    /* whether or not toilet thinks it will need a
+     * blob comparator, we know we will need one */
+    Cprintf("DEBUG: need blobcmp: %s\n", tpp_dtable_get_cmp_name(pCur->toilet.dtable));
+    /* copy the KeyInfo structure */
+    size_t nField = pKeyInfo->nField;
+    size_t nByte = sizeof(*pKeyInfo) + (nField - 1) * sizeof(pKeyInfo->aColl[0]);
+    struct KeyInfo * copy = malloc(pKeyInfo->aSortOrder ? (nByte + nField) : nByte);
+    if(!copy)
+    {
+    fail_kill:
+      tpp_dtable_cache_close(p->pBt->toilet.cache, pCur->toilet.dtable);
+      pCur->toilet.dtable = NULL;
+      return -1;
+    }
+    memcpy(copy, pKeyInfo, nByte);
+    if(!copy->enc)
+    {
+      /* er... where would we get this, I wonder? */
+      Yprintf("No string encoding specified, assuming UTF8.\n");
+      copy->enc = SQLITE_UTF8;
+    }
+    if(pKeyInfo->aSortOrder)
+    {
+      copy->aSortOrder = (uint8_t *) &copy->aColl[nField];
+      memcpy(copy->aSortOrder, pKeyInfo->aSortOrder, nField);
+    }
+    pCur->toilet.blobcmp = tpp_new_blobcmp("sqlite3VdbeRecordCompare", toilet_wrap_vdbe_record_compare_1, copy, NULL, true);
+    if(tpp_dtable_set_blob_cmp(pCur->toilet.dtable, pCur->toilet.blobcmp) >= 0)
+      tpp_blobcmp_retain(pCur->toilet.blobcmp);
+    else
+    {
+      tpp_blobcmp_release(&pCur->toilet.blobcmp);
+      goto fail_kill;
+    }
+  }
+  else
+    pCur->toilet.blobcmp = NULL;
+  
+  pCur->toilet.cursor = tpp_dtable_cache_iter(p->pBt->toilet.cache, iTable);
+  if(!pCur->toilet.cursor)
+  {
+    if(pCur->toilet.blobcmp)
+      tpp_blobcmp_release(&pCur->toilet.blobcmp);
+    goto fail_kill;
+  }
+  
+  return 0;
 }
 #endif
 int sqlite3BtreeCursor(
@@ -3025,64 +3128,14 @@ int sqlite3BtreeCursor(
   p->pBt->db = p->db;
   rc = btreeCursor(p, iTable, wrFlag, pKeyInfo, pCur);
 #if HAVE_TOILET
-  pCur->toilet.table = NULL;
-  if( p->pBt->toilet.db && rc == SQLITE_OK ){
-    t_row *flag_row = toilet_get_row(p->pBt->toilet.root, iTable);
-    rc = SQLITE_INTERNAL;
-    if( flag_row ){
-      const t_value *flags = toilet_row_value(flag_row, "flags", T_INT);
-      if( flags ){
-        char number[24];
-        pCur->toilet.flags = flags->v_int;
-        snprintf(number, sizeof(number), "%u", iTable);
-        pCur->toilet.table = toilet_get_gtable(p->pBt->toilet.db, number);
-        if( pCur->toilet.table ){
-          if( !(pCur->toilet.flags & BTREE_INTKEY) ){
-            /* whether or not toilet thinks it will need a
-             * blob comparator, we know we will need one */
-            Cprintf("DEBUG: need blobcmp: %s\n", toilet_gtable_blobcmp_name(pCur->toilet.table));
-            /* copy the KeyInfo structure */
-            size_t nField = pKeyInfo->nField;
-            size_t nByte = sizeof(*pKeyInfo) + (nField - 1) * sizeof(pKeyInfo->aColl[0]);
-            struct KeyInfo *copy = malloc(pKeyInfo->aSortOrder ? (nByte + nField) : nByte);
-            if( copy ){
-              memcpy(copy, pKeyInfo, nByte);
-              if( !copy->enc ){
-                /* er... where would we get this, I wonder? */
-                Yprintf("No string encoding specified, assuming UTF8.\n");
-                copy->enc = SQLITE_UTF8;
-              }
-              if( pKeyInfo->aSortOrder ){
-                copy->aSortOrder = (uint8_t *) &copy->aColl[nField];
-                memcpy(copy->aSortOrder, pKeyInfo->aSortOrder, nField);
-              }
-            }else{
-              /* XXX fail */
-              assert(copy);
-            }
-            pCur->toilet.blobcmp = toilet_new_blobcmp("sqlite3VdbeRecordCompare", toilet_wrap_vdbe_record_compare_1, copy, NULL, true);
-            if( toilet_gtable_set_blobcmp(pCur->toilet.table, pCur->toilet.blobcmp) >= 0 ){
-              toilet_blobcmp_retain(pCur->toilet.blobcmp);
-            }else{
-              toilet_blobcmp_release(&pCur->toilet.blobcmp);
-              /* XXX fail */
-              assert(0);
-            }
-          }else{
-            pCur->toilet.blobcmp = NULL;
-          }
-          pCur->toilet.cursor = toilet_gtable_cursor(pCur->toilet.table);
-          if( pCur->toilet.cursor ){
-            pCur->toilet.row = NULL;
-            rc = SQLITE_OK;
-          }else{
-            toilet_put_gtable(pCur->toilet.table);
-            pCur->toilet.table = NULL;
-          }
-        }
-      }
-      toilet_put_row(flag_row);
+  if( p->pBt->toilet.dir_fd >= 0 && rc == SQLITE_OK ){
+    rc = sqlite3BtreeCursorToilet(p, iTable, pKeyInfo, pCur);
+    if( rc < 0 ){
+      rc = SQLITE_INTERNAL;
     }
+  }else{
+    /* this is how we know it's not open */
+    pCur->toilet.dtable = NULL;
   }
 #endif
   sqlite3BtreeLeave(p);
@@ -3105,17 +3158,14 @@ int sqlite3BtreeCloseCursor(BtCursor *pCur){
     BtShared *pBt = pCur->pBt;
     sqlite3BtreeEnter(pBtree);
 #if HAVE_TOILET
-    if( pCur->toilet.table ){
-      if( pCur->toilet.row ){
-        toilet_put_row(pCur->toilet.row);
-      }
+    if( pCur->toilet.dtable ){
       if( pCur->toilet.blobcmp ){
-        toilet_blobcmp_release(&pCur->toilet.blobcmp);
+        tpp_blobcmp_release(&pCur->toilet.blobcmp);
       }
       if( pCur->toilet.cursor ){
-        toilet_close_cursor(pCur->toilet.cursor);
+        tpp_dtable_cache_close_iter(pCur->pBt->toilet.cache, pCur->toilet.cursor);
       }
-      toilet_put_gtable(pCur->toilet.table);
+      tpp_dtable_cache_close(pCur->pBt->toilet.cache, pCur->toilet.dtable);
     }
 #endif
     pBt->db = pBtree->db;
@@ -3233,21 +3283,27 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
       *pSize = pCur->info.nKey;
     }
 #if HAVE_TOILET
-    if( pCur->toilet.table ){
-      if( !toilet_cursor_valid(pCur->toilet.cursor) ){
+    if( pCur->toilet.dtable ){
+      if( !tpp_dtable_iter_valid(pCur->toilet.cursor) ){
         if( *pSize ){
           Rprintf("KEY ERROR %d != (toilet) [invalid]\n", *pSize);
         }
       }else{
+        tpp_dtype key;
+        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
         if( pCur->toilet.flags & BTREE_INTKEY ){
-          assert( !toilet_gtable_blobkey(pCur->toilet.table) );
-          if( *pSize != toilet_cursor_row_id(pCur->toilet.cursor) ){
-            Rprintf("KEY ERROR %d != (toilet) %d\n", *pSize, toilet_cursor_row_id(pCur->toilet.cursor));
+          uint32_t value;
+          tpp_dtype_get_int(&key, &value);
+          if( *pSize != value ){
+            Rprintf("KEY ERROR %d != (toilet) %d\n", *pSize, value);
           }
         }else{
           size_t size;
-          assert( toilet_gtable_blobkey(pCur->toilet.table) );
-          toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
+          tpp_blob blob;
+          tpp_dtype_get_blb(&key, &blob);
+          size = tpp_blob_size(&blob);
+          tpp_blob_kill(&blob);
+          tpp_dtype_kill(&key);
           if( *pSize != size ){
             Rprintf("KEY ERROR %d != (toilet) %d [blob]\n", *pSize, size);
           }
@@ -3282,44 +3338,28 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
       *pSize = pCur->info.nData;
     }
 #if HAVE_TOILET
-    if( pCur->toilet.table ){
-      const t_value *value;
-      if( !pCur->toilet.row ){
-        if( !toilet_cursor_valid(pCur->toilet.cursor) ){
-          if( *pSize ){
-            Rprintf("SIZE ERROR %d != (toilet) [invalid]\n", *pSize);
-          }
-        }else if( pCur->toilet.flags & BTREE_INTKEY ){
-          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
-          pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
-        }else{
-          size_t size;
-          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-          pCur->toilet.row = toilet_get_row_blobkey(pCur->toilet.table, key, size);
-        }
-      }
-      if( pCur->toilet.row ){
-        if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
-          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+    if( pCur->toilet.dtable ){
+      if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+        tpp_blob value;
+        if( pCur->toilet.flags & BTREE_INTKEY ){
+          /* sanity check */
+          uint32_t id;
+          tpp_dtype key;
+          tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+          tpp_dtype_get_int(&key, &id);
           if( pCur->info.nKey != id && pCur->info.nKey ){
-            Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+            Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
           }
         }
-        value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
-        if( value ){
-          if( *pSize != value->v_blob.length ){
-            Rprintf("SIZE ERROR %d != (toilet) %d [blob]\n", *pSize, value->v_blob.length);
-          }
-        }else{
-          value = toilet_row_value(pCur->toilet.row, "int", T_INT);
-          if( value ){
-            if( *pSize != sizeof(value->v_int) ){
-              Rprintf("SIZE ERROR %d != (toilet) %d\n", *pSize, sizeof(value->v_int));
-            }
-          }else{
-            /* XXX FIXME */
-            abort();
-          }
+        tpp_dtable_iter_value(pCur->toilet.cursor, &value);
+        /* ... */
+        if( *pSize != tpp_blob_size(&value) ){
+          Rprintf("SIZE ERROR %d != (toilet) %d [blob]\n", *pSize, tpp_blob_size(&value));
+        }
+        tpp_blob_kill(&value);
+      }else{
+        if( *pSize ){
+          Rprintf("SIZE ERROR %d != (toilet) 0\n", *pSize);
         }
       }
     }
@@ -3664,36 +3704,19 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
     assert( pCur->idx>=0 && pCur->idx<pCur->pPage->nCell );
     rc = accessPayload(pCur, offset, amt, pBuf, 1, 0);
 #if HAVE_TOILET
-    if( pCur->toilet.table && rc == SQLITE_OK ){
-      if( !pCur->toilet.row ){
-        if( pCur->toilet.flags & BTREE_INTKEY ){
-          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
-          pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
-        }else{
-          size_t size;
-          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-          pCur->toilet.row = toilet_get_row_blobkey(pCur->toilet.table, key, size);
-        }
-      }
-      const t_value *value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
-      const void *data = NULL;
-      u32 size = 0;
-      if( value ){
-        data = value->v_blob.data;
-        size = value->v_blob.length;
-      }else{
-        value = toilet_row_value(pCur->toilet.row, "int", T_INT);
-        if( value ){
-          /* endianness? */
-          data = &value->v_int;
-          size = sizeof(value->v_int);
-        }
-      }
-      /* XXX FIXME */
-      assert(data);
+    if( pCur->toilet.dtable && rc == SQLITE_OK ){
+      uint32_t size;
+      tpp_blob value;
+      const void *data;
+      assert(tpp_dtable_iter_valid(pCur->toilet.cursor));
+      tpp_dtable_iter_value(pCur->toilet.cursor, &value);
+      size = tpp_blob_size(&value);
+      data = tpp_blob_data(&value);
+      /* XXX check size */
       if( memcmp(pBuf, data + offset, amt) ){
         Rprintf("DATA ERROR (toilet) blob\n");
       }
+      tpp_blob_kill(&value);
     }
 #endif
   }
@@ -3776,28 +3799,36 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
   if( pCur->eState==CURSOR_VALID ){
 #if HAVE_TOILET
     const void *data = (const void*)fetchPayload(pCur, pAmt, 0);
-    if( pCur->toilet.table ){
-      if( toilet_cursor_valid(pCur->toilet.cursor) ){
-        const void *key;
+    if( pCur->toilet.dtable ){
+      if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+        tpp_dtype key;
+        const void *key_data;
+        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
         if( pCur->toilet.flags & BTREE_INTKEY ){
-          pCur->toilet.fetch_key = toilet_cursor_row_id(pCur->toilet.cursor);
+          assert(tpp_dtype_get_type(&key) == DT_UINT32);
+          tpp_dtype_get_int(&key, &pCur->toilet.fetch_key);
           if( *pAmt != sizeof(pCur->toilet.fetch_key) && *pAmt ){
             /* apparently (see fetchPayload() above), *pAmt will always be 0 for integer key tables */
             Yprintf("WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
           }
           /* endianness? */
-          key = &pCur->toilet.fetch_key;
+          key_data = &pCur->toilet.fetch_key;
         }else{
-          size_t size;
-          key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-          if( *pAmt != size ){
-            Rprintf("WHOA: key size (%d) [blob] != *pAmt (%d)!\n", key, *pAmt);
+          tpp_blob value;
+          tpp_dtype_get_blb(&key, &value);
+          key_data = tpp_blob_data(&value);
+          if( *pAmt != tpp_blob_size(&value) ){
+            Rprintf("WHOA: key size (%d) [blob] != *pAmt (%d)!\n", tpp_blob_size(&value), *pAmt);
           }
+          /* somebody else still has a copy of this blob in toilet,
+           * so we can return it even after killing this one */
+          tpp_blob_kill(&value);
+          tpp_dtype_kill(&key);
         }
-        if( memcmp(key, data, *pAmt) ){
+        if( memcmp(key_data, data, *pAmt) ){
           Rprintf("DATA ERROR (toilet) key\n");
         }
-        /* can return "key" */
+        /* can return "key_data" */
       }else{
         Rprintf("MISSING TOILET KEY\n");
       }
@@ -3815,44 +3846,25 @@ const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
   if( pCur->eState==CURSOR_VALID ){
 #if HAVE_TOILET
     const void *data = (const void*)fetchPayload(pCur, pAmt, 1);
-    if( pCur->toilet.table ){
-      if( !pCur->toilet.row ){
-        if( pCur->toilet.flags & BTREE_INTKEY ){
-          t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
-          pCur->toilet.row = toilet_get_row(pCur->toilet.table, id);
-        }else{
-          size_t size;
-          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-          pCur->toilet.row = toilet_get_row_blobkey(pCur->toilet.table, key, size);
-        }
+    if( pCur->toilet.dtable ){
+      int min;
+      size_t size;
+      tpp_blob value;
+      const void *blob;
+      tpp_dtable_iter_value(pCur->toilet.cursor, &value);
+      size = tpp_blob_size(&value);
+      blob = tpp_blob_data(&value);
+      min = (*pAmt < size) ? *pAmt : size;
+      if( min != *pAmt ){
+        Rprintf("WHOA: [blob] min (%d) != *pAmt (%d)!\n", min, *pAmt);
       }
-      const t_value *value = toilet_row_value(pCur->toilet.row, "blob", T_BLOB);
-      if( value ){
-        int min = (*pAmt < value->v_blob.length) ? *pAmt : value->v_blob.length;
-        if( min != *pAmt ){
-          Rprintf("WHOA: [blob] min (%d) != *pAmt (%d)!\n", min, *pAmt);
-        }
-        if( memcmp(value->v_blob.data, data, min) ){
-          Rprintf("DATA ERROR (toilet) blob\n");
-        }
-        /* can return value->v_blob.data */
-      }else{
-        value = toilet_row_value(pCur->toilet.row, "int", T_INT);
-        if( value ){
-          int min = (*pAmt < sizeof(value->v_int)) ? *pAmt : sizeof(value->v_int);
-          if( min != *pAmt ){
-            Rprintf("WHOA: [int] min (%d) != *pAmt (%d)!\n", min, *pAmt);
-          }
-          /* endianness? */
-          if( memcmp(&value->v_int, data, min) ){
-            Rprintf("DATA ERROR (toilet) int\n");
-          }
-          /* can return &value->v_int */
-        }else{
-          /* XXX FIXME */
-          abort();
-        }
+      if( memcmp(blob, data, min) ){
+        Rprintf("DATA ERROR (toilet) blob\n");
       }
+      /* somebody else still has a copy of this blob in toilet,
+       * so we can return it even after killing this one */
+      tpp_blob_kill(&value);
+      /* can return "blob" */
     }
     return data;
 #else
@@ -4064,17 +4076,16 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
     }
   }
 #if HAVE_TOILET
-  if( pCur->toilet.table ){
-    if( pCur->toilet.row ){
-      toilet_put_row(pCur->toilet.row);
-      pCur->toilet.row = NULL;
-    }
-    toilet_cursor_first(pCur->toilet.cursor);
+  if( pCur->toilet.dtable ){
+    tpp_dtable_iter_first(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
-    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
-      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+    if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+      uint32_t id;
+      tpp_dtype key;
+      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+      tpp_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
   }
@@ -4106,17 +4117,16 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
     }
   }
 #if HAVE_TOILET
-  if( pCur->toilet.table ){
-    if( pCur->toilet.row ){
-      toilet_put_row(pCur->toilet.row);
-      pCur->toilet.row = NULL;
-    }
-    toilet_cursor_last(pCur->toilet.cursor);
+  if( pCur->toilet.dtable ){
+    tpp_dtable_iter_last(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
-    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
-      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+    if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+      uint32_t id;
+      tpp_dtype key;
+      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+      tpp_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
   }
@@ -4125,9 +4135,163 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
 }
 
 #if HAVE_TOILET
-static int toilet_wrap_vdbe_record_compare_2(const void *pKey1, size_t nKey1, void *user){
-  UnpackedRecord *pPKey2 = (UnpackedRecord *) user;
+static int toilet_wrap_vdbe_record_compare_2(const void * pKey1, size_t nKey1, void * user)
+{
+  UnpackedRecord * pPKey2 = (UnpackedRecord *) user;
   return sqlite3VdbeRecordCompare(nKey1, pKey1, pPKey2);
+}
+static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i64 nKey, int * pRes)
+{
+  int r;
+  /* all right, screw this idiotic indenting style, I'm using mine */
+  if(pCur->toilet.flags & BTREE_INTKEY)
+  {
+    tpp_dtype key;
+    if(nKey > UINT_MAX)
+    {
+      /* XXX FIXME */
+      Rprintf("UNIMPLEMENTED TOILET SEEK (nKey)\n");
+      return 0;
+    }
+    tpp_dtype_int(&key, nKey);
+    r = tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
+    if(r)
+    {
+      /* found it */
+      if(*pRes)
+        Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
+      r = 0;
+    }
+    else
+    {
+      if(!tpp_dtable_iter_valid(pCur->toilet.cursor))
+      {
+        if( *pRes >= 0 )
+          Rprintf("SEEK ERROR %d != (toilet) [invalid]\n", *pRes);
+      }
+      else
+      {
+        uint32_t id;
+        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+        tpp_dtype_get_int(&key, &id);
+        if(*pRes < 0 && id >= nKey)
+        {
+          /* THIS IS A HACK */
+          /* The default btree code is lazy, and won't find the actual key in
+           * many cases. Instead, it only finds the leaf page that would
+           * contain the key, if it existed - even if it does exist. The
+           * cursor seems to be left pointing at the first entry of that page,
+           * which will be less than (or equal to) the requested key. So we
+           * move the toilet cursor backwards to find the same entry, even
+           * though this is not really necessary. Later when we are not
+           * comparing every result to the original btree code we can stop. */
+          Yprintf("%s(): toilet matching btree laziness with horrible hack\n", __FUNCTION__);
+          tpp_dtype_int(&key, pCur->info.nKey);
+          tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
+          tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+          tpp_dtype_get_int(&key, &id);
+        }
+        if(nKey < id)
+        {
+          if(*pRes <= 0)
+            Rprintf("SEEK ERROR %d != (toilet) 1\n", *pRes);
+        }
+        else if(nKey > id)
+        {
+          if(*pRes >= 0)
+            Rprintf("SEEK ERROR %d != (toilet) -1\n", *pRes);
+        }
+        else
+        {
+          if(*pRes)
+            Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
+        }
+      }
+    }
+  }
+  else
+  {
+    r = tpp_dtable_iter_seek_test(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare_2, pUnKey);
+    if(r)
+    {
+      /* found it */
+      if(*pRes)
+        Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
+      r = 0;
+    }
+    else
+    {
+      if(!tpp_dtable_iter_valid(pCur->toilet.cursor))
+      {
+        if(*pRes >= 0)
+          Rprintf("SEEK ERROR %d != (toilet) [invalid, blob]\n", *pRes);
+      }
+      else
+      {
+        int c;
+        size_t size;
+        tpp_dtype key;
+        tpp_blob blob;
+        const void * data;
+        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+        tpp_dtype_get_blb(&key, &blob);
+        tpp_dtype_kill(&key);
+        data = tpp_blob_data(&blob);
+        size = tpp_blob_size(&blob);
+        c = sqlite3VdbeRecordCompare(size, data, pUnKey);
+        if(*pRes < 0 && c >= 0)
+        {
+          /* THIS IS A HACK */
+          /* The default btree code is lazy, and won't find the actual key in
+           * many cases. Instead, it only finds the leaf page that would
+           * contain the key, if it existed - even if it does exist. The
+           * cursor seems to be left pointing at the first entry of that page,
+           * which will be less than (or equal to) the requested key. So we
+           * move the toilet cursor backwards to find the same entry, even
+           * though this is not really necessary. Later when we are not
+           * comparing every result to the original btree code we can stop. */
+          int bts;
+          const uint8_t * btk;
+          tpp_dtable * save = pCur->toilet.dtable;
+          Yprintf("%s(): toilet matching btree laziness with horrible hack [blob]\n", __FUNCTION__);
+          /* temporarily disable toilet processing just to fetch the btree
+           * key, since the btree and toilet cursors are out of sync */
+          pCur->toilet.dtable = NULL;
+          btk = sqlite3BtreeKeyFetch(pCur, &bts);
+          pCur->toilet.dtable = save;
+          tpp_blob_kill(&blob);
+          tpp_blob_new(&blob, bts, btk);
+          tpp_dtype_blb(&key, &blob);
+          tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
+          tpp_dtype_kill(&key);
+          tpp_blob_kill(&blob);
+          tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+          tpp_dtype_get_blb(&key, &blob);
+          tpp_dtype_kill(&key);
+          data = tpp_blob_data(&blob);
+          size = tpp_blob_size(&blob);
+          c = sqlite3VdbeRecordCompare(size, data, pUnKey);
+        }
+        tpp_blob_kill(&blob);
+        if(c > 0)
+        {
+          if(*pRes <= 0)
+            Rprintf("SEEK ERROR %d != (toilet) 1 [blob]\n", *pRes);
+        }
+        else if(c < 0)
+        {
+          if(*pRes >= 0)
+            Rprintf("SEEK ERROR %d != (toilet) -1 [blob]\n", *pRes);
+        }
+        else
+        {
+          if(*pRes)
+            Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
+        }
+      }
+    }
+  }
+  return r;
 }
 #endif
 /* Move the cursor so that it points to an entry near the key 
@@ -4317,117 +4481,10 @@ int sqlite3BtreeMoveto(
   }
 moveto_finish:
 #if HAVE_TOILET
-  if( pCur->toilet.table && rc == SQLITE_OK ){
-    if( pCur->toilet.row ){
-      toilet_put_row(pCur->toilet.row);
-      pCur->toilet.row = NULL;
-    }
-    if( pCur->toilet.flags & BTREE_INTKEY ){
-      if( nKey > UINT_MAX ){
-        /* XXX FIXME */
-        Rprintf("UNIMPLEMENTED TOILET SEEK (nKey)\n");
-      }else{
-        rc = toilet_cursor_seek(pCur->toilet.cursor, nKey);
-        if( rc ){
-          /* found it */
-          rc = SQLITE_OK;
-          if( *pRes ){
-            Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
-          }
-        }else{
-          if( !toilet_cursor_valid(pCur->toilet.cursor) ){
-            if( *pRes >= 0 ){
-              Rprintf("SEEK ERROR %d != (toilet) [invalid]\n", *pRes);
-            }
-          }else{
-            t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
-            if( *pRes < 0 && id >= nKey ){
-              /* THIS IS A HACK */
-              /* The default btree code is lazy, and won't find the actual key in
-               * many cases. Instead, it only finds the leaf page that would
-               * contain the key, if it existed - even if it does exist. The
-               * cursor seems to be left pointing at the first entry of that page,
-               * which will be less than (or equal to) the requested key. So we
-               * move the toilet cursor backwards to find the same entry, even
-               * though this is not really necessary. Later when we are not
-               * comparing every result to the original btree code we can stop. */
-              Yprintf("%s(): toilet matching btree laziness with horrible hack\n", __FUNCTION__);
-              toilet_cursor_seek(pCur->toilet.cursor, pCur->info.nKey);
-              id = toilet_cursor_row_id(pCur->toilet.cursor);
-            }
-            if( nKey < id ){
-              if( *pRes <= 0 ){
-                Rprintf("SEEK ERROR %d != (toilet) 1\n", *pRes);
-              }
-            }else if( nKey > id ){
-              if( *pRes >= 0 ){
-                Rprintf("SEEK ERROR %d != (toilet) -1\n", *pRes);
-              }
-            }else{
-              if( *pRes ){
-                Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
-              }
-            }
-          }
-        }
-        rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
-      }
-    }else{
-      rc = toilet_cursor_seek_magic(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare_2, pUnKey);
-      if( rc ){
-        /* found it */
-        rc = SQLITE_OK;
-        if( *pRes ){
-          Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
-        }
-      }else{
-        if( !toilet_cursor_valid(pCur->toilet.cursor) ){
-          if( *pRes >= 0 ){
-            Rprintf("SEEK ERROR %d != (toilet) [invalid, blob]\n", *pRes);
-          }
-        }else{
-          size_t size;
-          const void *key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-          int c = sqlite3VdbeRecordCompare(size, key, pUnKey);
-          if( *pRes < 0 && c >= 0 ){
-            /* THIS IS A HACK */
-            /* The default btree code is lazy, and won't find the actual key in
-             * many cases. Instead, it only finds the leaf page that would
-             * contain the key, if it existed - even if it does exist. The
-             * cursor seems to be left pointing at the first entry of that page,
-             * which will be less than (or equal to) the requested key. So we
-             * move the toilet cursor backwards to find the same entry, even
-             * though this is not really necessary. Later when we are not
-             * comparing every result to the original btree code we can stop. */
-            int bts;
-            const uint8_t * btk;
-            t_gtable * save = pCur->toilet.table;
-            Yprintf("%s(): toilet matching btree laziness with horrible hack [blob]\n", __FUNCTION__);
-            /* temporarily disable toilet processing just to fetch the btree
-             * key, since the btree and toilet cursors are out of sync */
-            pCur->toilet.table = NULL;
-            btk = sqlite3BtreeKeyFetch(pCur, &bts);
-            pCur->toilet.table = save;
-            toilet_cursor_seek_blobkey(pCur->toilet.cursor, btk, bts);
-            key = toilet_cursor_row_blobkey(pCur->toilet.cursor, &size);
-            c = sqlite3VdbeRecordCompare(size, key, pUnKey);
-          }
-          if( c > 0 ){
-            if( *pRes <= 0 ){
-              Rprintf("SEEK ERROR %d != (toilet) 1 [blob]\n", *pRes);
-            }
-          }else if( c < 0 ){
-            if( *pRes >= 0 ){
-              Rprintf("SEEK ERROR %d != (toilet) -1 [blob]\n", *pRes);
-            }
-          }else{
-            if( *pRes ){
-              Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
-            }
-          }
-        }
-      }
-      rc = (rc < 0) ? SQLITE_INTERNAL : SQLITE_OK;
+  if( pCur->toilet.dtable && rc == SQLITE_OK ){
+    rc = sqlite3BtreeMovetoToilet(pCur, pUnKey, nKey, pRes);
+    if( rc < 0 ){
+      rc = SQLITE_INTERNAL;
     }
   }
 #endif
@@ -4497,18 +4554,17 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
   assert( pCur->idx<pPage->nCell );
 
 #if HAVE_TOILET
-  if( pCur->toilet.table ){
-    if( pCur->toilet.row ){
-      toilet_put_row(pCur->toilet.row);
-      pCur->toilet.row = NULL;
-    }
-    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
-      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+  if( pCur->toilet.dtable ){
+    if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+      uint32_t id;
+      tpp_dtype key;
+      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+      tpp_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
-    toilet_cursor_next(pCur->toilet.cursor);
+    tpp_dtable_iter_next(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
   }
 #endif
@@ -4535,13 +4591,13 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
     *pRes = 0;
     if( pPage->leafData ){
 #if HAVE_TOILET
-      t_gtable *save = pCur->toilet.table;
+      tpp_dtable *save = pCur->toilet.dtable;
       /* disable toilet for the recursive call to keep the cursors in sync */
-      pCur->toilet.table = NULL;
+      pCur->toilet.dtable = NULL;
 #endif
       rc = sqlite3BtreeNext(pCur, pRes);
 #if HAVE_TOILET
-      pCur->toilet.table = save;
+      pCur->toilet.dtable = save;
 #endif
     }else{
       rc = SQLITE_OK;
@@ -4587,18 +4643,17 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
   pCur->skip = 0;
 
 #if HAVE_TOILET
-  if( pCur->toilet.table ){
-    if( pCur->toilet.row ){
-      toilet_put_row(pCur->toilet.row);
-      pCur->toilet.row = NULL;
-    }
-    if( (pCur->toilet.flags & BTREE_INTKEY) && toilet_cursor_valid(pCur->toilet.cursor) ){
-      t_row_id id = toilet_cursor_row_id(pCur->toilet.cursor);
+  if( pCur->toilet.dtable ){
+    if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+      uint32_t id;
+      tpp_dtype key;
+      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+      tpp_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, (unsigned) id);
+        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
-    toilet_cursor_prev(pCur->toilet.cursor);
+    tpp_dtable_iter_prev(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
   }
 #endif
@@ -4627,13 +4682,13 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
     pCur->validNKey = 0;
     if( pPage->leafData && !pPage->leaf ){
 #if HAVE_TOILET
-      t_gtable *save = pCur->toilet.table;
+      tpp_dtable *save = pCur->toilet.dtable;
       /* disable toilet for the recursive call to keep the cursors in sync */
-      pCur->toilet.table = NULL;
+      pCur->toilet.dtable = NULL;
 #endif
       rc = sqlite3BtreePrevious(pCur, pRes);
 #if HAVE_TOILET
-      pCur->toilet.table = save;
+      pCur->toilet.dtable = save;
 #endif
     }else{
       rc = SQLITE_OK;
@@ -6496,32 +6551,29 @@ int sqlite3BtreeInsert(
   if( rc==SQLITE_OK ){
     moveToRoot(pCur);
 #if HAVE_TOILET
-    if( pCur->toilet.table ){
+    if( pCur->toilet.dtable ){
       if( nKey > UINT_MAX || nZero ){
         Rprintf("UNIMPLEMENTED TOILET APPEND (nKey = %lld, nZero = %d)\n", nKey, nZero);
       }else{
-        t_row *row;
-        /* insertion doesn't use pCur->toilet.row */
+        tpp_dtype key;
+        tpp_blob value;
         if( pCur->toilet.flags & BTREE_INTKEY ){
-          row = toilet_get_row(pCur->toilet.table, (t_row_id) nKey);
+          tpp_dtype_int(&key, nKey);
         }else{
-          row = toilet_get_row_blobkey(pCur->toilet.table, pKey, nKey);
+          tpp_blob_new(&value, nKey, pKey);
+          tpp_dtype_blb(&key, &value);
+          tpp_blob_kill(&value);
         }
-        if( row ){
-          if( pData ){
-            const t_value value = {v_blob: {length: nData, data: (void *) pData}};
-            rc = toilet_row_set_value_hint(row, "blob", T_BLOB, &value, appendBias ? true : false);
-            toilet_row_remove_key(row, "int");
-          }else{
-            const t_value value = {v_int: nData};
-            rc = toilet_row_set_value_hint(row, "int", T_INT, &value, appendBias ? true : false);
-            toilet_row_remove_key(row, "blob");
-          }
-          toilet_put_row(row);
-          rc = (rc < 0) ? SQLITE_ERROR : SQLITE_OK;
+        if( pData ){
+          tpp_blob_new(&value, nData, pData);
         }else{
-          rc = SQLITE_ERROR;
+          uint32_t data = nData;
+          tpp_blob_new(&value, sizeof(data), &data);
         }
+        rc = tpp_dtable_insert(pCur->toilet.dtable, &key, &value, appendBias ? true : false);
+        rc = (rc < 0) ? SQLITE_ERROR : SQLITE_OK;
+        tpp_blob_kill(&value);
+        tpp_dtype_kill(&key);
       }
     }
 #endif
@@ -6645,6 +6697,42 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   }
   return rc;
 }
+
+#if HAVE_TOILET
+static int sqlite3BtreeCreateTableToilet(Btree * p, int * piTable, int flags)
+{
+  /* all right, screw this idiotic indenting style, I'm using mine */
+  tpp_dtype key;
+  tpp_blob value;
+  tpp_dtype_type key_type;
+  uint32_t id, next;
+  
+  tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
+  tpp_dtable_find(p->pBt->toilet.root, &key, &value);
+  id = *(uint32_t *) tpp_blob_data(&value);
+  assert(id >= TOILET_FIRST_TABLE_NO);
+  next = id + 1;
+  tpp_blob_overwrite(&value, 0, &next, sizeof(next));
+  /* update the next table number */
+  tpp_dtable_insert(p->pBt->toilet.root, &key, &value, false);
+  tpp_blob_kill(&value);
+  
+  /* XXX HACK */
+  id = *piTable;
+  assert(id >= TOILET_FIRST_TABLE_NO);
+  
+  /* store the flags for this table */
+  tpp_dtype_int(&key, id);
+  tpp_blob_new(&value, sizeof(flags), &flags);
+  tpp_dtable_insert(p->pBt->toilet.root, &key, &value, true);
+  
+  /* create the table itself */
+  key_type = (flags & BTREE_INTKEY) ? DT_UINT32 : DT_BLOB;
+  tpp_dtable_cache_create_empty(p->pBt->toilet.cache, id, key_type);
+  
+  return 0;
+}
+#endif
 
 /*
 ** Create a new BTree table.  Write into *piTable the page
@@ -6796,28 +6884,10 @@ int sqlite3BtreeCreateTable(Btree *p, int *piTable, int flags){
   rc = btreeCreateTable(p, piTable, flags);
   sqlite3BtreeLeave(p);
 #if HAVE_TOILET
-  if( p->pBt->toilet.db && rc == SQLITE_OK ){
-    t_row_id id;
-    t_row *flag_row;
-    char number[24];
-    const t_value *next = toilet_row_value(p->pBt->toilet.next, "next", T_INT);
-    t_value value = *next;
-    /* XXX HACK */
-    id = *piTable; value.v_int++;
-    assert(id >= TOILET_FIRST_TABLE_NO);
-    snprintf(number, sizeof(number), "%u", id);
-    /* update the next table number */
-    toilet_row_set_value(p->pBt->toilet.next, "next", T_INT, &value);
-    /* store the flags for this table */
-    flag_row = toilet_get_row(p->pBt->toilet.root, id);
-    value.v_int = flags;
-    toilet_row_set_value(flag_row, "flags", T_INT, &value);
-    toilet_put_row(flag_row);
-    /* create the table itself */
-    if( flags & BTREE_INTKEY ){
-      toilet_new_gtable(p->pBt->toilet.db, number);
-    }else{
-      toilet_new_gtable_blobkey(p->pBt->toilet.db, number);
+  if( p->pBt->toilet.dir_fd >= 0 && rc == SQLITE_OK ){
+    rc = sqlite3BtreeCreateTableToilet(p, piTable, flags);
+    if( rc < 0 ){
+      rc = SQLITE_INTERNAL;
     }
   }
 #endif
@@ -7078,12 +7148,17 @@ int sqlite3BtreeGetMeta(Btree *p, int idx, u32 *pMeta){
   *pMeta = get4byte(&pP1[36 + idx*4]);
   sqlite3PagerUnref(pDbPage);
 #if HAVE_TOILET
-  if( pBt->toilet.db ){
-    const char name[2] = {"0123456789ABCDEF"[idx], 0};
-    const t_value * value = toilet_row_value(pBt->toilet.meta, name, T_INT);
-    if( value->v_int != *pMeta ){
-      Rprintf("META ERROR [%d \"%s\"] %d != (toilet) %d\n", idx, name, *pMeta, value->v_int);
+  if( pBt->toilet.dir_fd >= 0 ){
+    tpp_dtype key;
+    tpp_blob value;
+    const uint32_t *meta;
+    tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
+    tpp_dtable_find(pBt->toilet.root, &key, &value);
+    meta = tpp_blob_data(&value);
+    if( meta[idx + 1] != *pMeta ){
+      Rprintf("META ERROR [%d] %d != (toilet) %d\n", idx, *pMeta, meta[idx + 1]);
     }
+    tpp_blob_kill(&value);
   }
 #endif
 
@@ -7128,10 +7203,14 @@ int sqlite3BtreeUpdateMeta(Btree *p, int idx, u32 iMeta){
       }
 #endif
 #if HAVE_TOILET
-      if( pBt->toilet.db ){
-        const char name[2] = {"0123456789ABCDEF"[idx], 0};
-        const t_value value = {v_int: iMeta};
-        rc = toilet_row_set_value(pBt->toilet.meta, name, T_INT, &value);
+      if( pBt->toilet.dir_fd >= 0 ){
+        tpp_dtype key;
+        tpp_blob value;
+        tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
+        tpp_dtable_find(pBt->toilet.root, &key, &value);
+        tpp_blob_overwrite(&value, (idx + 1) * sizeof(uint32_t), &iMeta, sizeof(uint32_t));
+        tpp_dtable_insert(pBt->toilet.root, &key, &value, false);
+        tpp_blob_kill(&value);
       }
 #endif
     }
@@ -7156,7 +7235,7 @@ int sqlite3BtreeFlags(BtCursor *pCur){
   assert( pPage->pBt==pCur->pBt );
   Dprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pPage ? pPage->aData[pPage->hdrOffset] : 0);
 #if HAVE_TOILET
-  if( pCur->toilet.table && pPage ){
+  if( pCur->toilet.dtable && pPage ){
     /* NOTE: 0x8 is random, 0x7 is 0x5 (intkey+leafdata) for tables and 0x2 (zerodata) for indices: these were the flags to CreateTable! */
     if( (pPage->aData[pPage->hdrOffset] & 0x7) != pCur->toilet.flags ){
       Rprintf("ERROR \"\":%d flags 0x%X != (toilet) 0x%X\n", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->toilet.flags);

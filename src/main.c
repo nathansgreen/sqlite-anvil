@@ -27,7 +27,7 @@
 #endif
 
 #if HAVE_TOILET
-#include <toilet.h>
+#include <toilet++.h>
 #endif
 
 /*
@@ -119,7 +119,7 @@ int sqlite3_initialize(void){
     rc = sqlite3_os_init();
 #if HAVE_TOILET
     if( rc==SQLITE_OK && !sqlite3Config.isToiletInit ){
-      rc = toilet_init(".");
+      rc = tpp_init(".");
       if( rc>= 0 ){
         rc = SQLITE_OK;
         sqlite3Config.isToiletInit = 1;
