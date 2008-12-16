@@ -1,7 +1,5 @@
 #!/bin/bash
 
-make || exit $?
-
 # Uncomment to enable patchgroup traces on the tests
 #TRACE_TEST="PATCHGROUP_TRACE=test.pgt"
 #TRACE_TPCC="PATCHGROUP_TRACE=tpcc.pgt"
@@ -10,8 +8,24 @@ make || exit $?
 # Uncomment to enable oprofile
 #OPROFILE=oprofile
 
+# Uncomment to use Featherstitch journal mode
+#JOURNAL=use_journal=1
+
+if [ -h fstitch ]
+then
+	FSTYPE="ext2"
+	MKFS_ARGS=""
+else
+	FSTYPE="ext3"
+	MKFS_ARGS="-j"
+	[ "$TRACE_TEST" -o "$TRACE_TPCC" -o "$TRACE_DBT2" -o \
+	  "$JOURNAL" ] && echo "Warning: ignoring Featherstitch-specific option (not using Featherstitch)"
+fi
+
+make || exit $?
+
 HOST="`hostname`"
-if [ "${HOST#kudos-}" == "$HOST" -a "$HOST" != "execl" ]
+if [ "${HOST#kudos-}" == "$HOST" -a "$HOST" != "execl" -a "$HOST" != "butters" ]
 then
 	echo "Not running on a kudos-* test machine, won't overwrite your file systems."
 	exit 1
@@ -24,18 +38,22 @@ then
 fi
 
 echo -n "Creating file system... "
-sudo mke2fs -m 0 -b 4096 /dev/sdb1 &> /dev/null
-sudo mount /dev/sdb1 /mnt/test -t ext2
-sudo chown `whoami` /mnt/test
+sudo mke2fs $MKFS_ARGS -m 0 -b 4096 /dev/sdb1 &> /dev/null
+sudo mount /dev/sdb1 /mnt/test -t $FSTYPE
+sudo chown -R `whoami` /mnt/test
+[ "$JOURNAL" ] && dd if=/dev/zero of=/mnt/test/.journal bs=1M count=64 2> /dev/null
 mkdir /mnt/test/journals
-sudo umount /mnt/test
 echo "done."
 
-echo -n "Loading Featherstitch... "
-sudo insmod fstitch/kfstitchd.ko device=/dev/sdb || exit $?
-[ -f /proc/kfstitchd_debug ] && (cat /proc/kfstitchd_debug > try.fdb &) || rm -f try.fdb
-sudo mount /mnt/test
-echo "done."
+if [ "$FSTYPE" == "ext2" ]
+then
+	sudo umount /mnt/test
+	echo -n "Loading Featherstitch... "
+	sudo insmod fstitch/kfstitchd.ko device=/dev/sdb || exit $?
+	[ -f /proc/kfstitchd_debug ] && (cat /proc/kfstitchd_debug > try.fdb &) || rm -f try.fdb
+	sudo mount /mnt/test
+	echo "done."
+fi
 
 # Run the sqlite test
 (WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TEST exec '"$WD/sqlite3"' sql-test) << EOF
@@ -85,13 +103,16 @@ then
 	find /mnt/test -type f -print0 | xargs -0 ls -l
 fi
 
-echo "Unloading Featherstitch..."
 sudo umount /mnt/test
-time sudo rmmod kfstitchd
+if [ "$FSTYPE" == "ext2" ]
+then
+	echo "Unloading Featherstitch..."
+	time sudo rmmod kfstitchd
+fi
 
 echo -ne \\007
 
-sudo mount /dev/sdb1 /mnt/test -t ext2
+sudo mount /dev/sdb1 /mnt/test -t $FSTYPE
 rm -f gmon.out* gmon.sum*
 if [ -f /mnt/test/gmon.out ]
 then
