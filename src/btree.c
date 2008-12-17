@@ -1234,10 +1234,17 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
       "cache_size" int 40000
       "base" class(dt) managed_dtable
       "base_config" config [
-        "base" class ustr_dtable
+        "base" class btree_dtable
+        "base_config" config [
+          "base" class simple_dtable
+        ]
         "fastbase" class simple_dtable
+        "digest_on_close" bool true
       ]
     ]));
+  if(r < 0)
+    goto fail_params;
+  r = TX_START(pBt->toilet.tx);
   if(r < 0)
     goto fail_params;
   pBt->toilet.cache = tpp_dtable_cache_new(pBt->toilet.dir_fd, "cache_dtable", pBt->toilet.config);
@@ -1295,6 +1302,7 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
     if(!pBt->toilet.one)
       goto fail_root;
   }
+  TX_END(pBt->toilet.tx);
   return 0;
 
 fail_root:
@@ -1306,6 +1314,7 @@ fail_params:
 fail_close:
   close(pBt->toilet.dir_fd);
   pBt->toilet.dir_fd = -1;
+  TX_CLEANUP(pBt->toilet.tx);
   return -1;
 }
 #endif
@@ -1659,11 +1668,16 @@ int sqlite3BtreeClose(Btree *p){
     assert( !pBt->pCursor );
 #if HAVE_TOILET
     if( pBt->toilet.dir_fd >= 0 ){
+      int r = TX_START(pBt->toilet.tx);
+      if( r < 0 ){
+        return SQLITE_INTERNAL;
+      }
       tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
       tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
       tpp_dtable_cache_kill(pBt->toilet.cache);
       tpp_params_kill(pBt->toilet.config);
       close(pBt->toilet.dir_fd);
+      TX_END(pBt->toilet.tx); /* technically TX_CLEANUP will do this */
       TX_CLEANUP(pBt->toilet.tx);
     }
 #endif
