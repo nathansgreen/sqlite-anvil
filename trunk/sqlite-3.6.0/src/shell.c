@@ -2067,6 +2067,11 @@ int main(int argc, char **argv){
     */
     if( zFirstCmd[0]=='.' ){
       do_meta_command(zFirstCmd, &data);
+      if( db ){
+        if( sqlite3_close(db)!=SQLITE_OK ){
+          fprintf(stderr,"error closing database: %s\n", sqlite3_errmsg(db));
+        }
+      }
       exit(0);
     }else{
       int rc;
