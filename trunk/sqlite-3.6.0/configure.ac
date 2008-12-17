@@ -592,11 +592,13 @@ if test x"$with_toilet" != x; then
 	AC_CHECK_FILE($with_toilet/toilet++.h, found=yes)
 	if test x$found = xyes; then
 		found="no"
+		TARGET_HAVE_TOILET=1
+		TARGET_TOILET_LIBS="-L$with_toilet -ltoilet -Wl,--rpath -Wl,$with_toilet"
 		AC_CHECK_FILE($with_toilet/fstitch/include/patchgroup.h, found=yes)
 		if test x$found = xyes; then
-			TARGET_TOILET_LIBS="-L$with_toilet -ltoilet -Wl,--rpath -Wl,$with_toilet"
 			TARGET_TOILET_INC="-I$with_toilet -I$with_toilet/fstitch/include"
-			TARGET_HAVE_TOILET=1
+		else
+			TARGET_TOILET_INC="-I$with_toilet"
 		fi
 	fi
 fi
