@@ -982,6 +982,11 @@ int sqlite3BtreeFactory(
     /* lower layers can't deal with this flag */
     vfsFlags &= ~SQLITE_OPEN_TOILET;
   }
+  if( db->openFlags & SQLITE_OPEN_ONLY_TOILET ){
+    btFlags |= BTREE_ONLY_TOILET;
+    /* lower layers can't deal with this flag */
+    vfsFlags &= ~SQLITE_OPEN_ONLY_TOILET;
+  }
 #endif
   if( zFilename==0 ){
 #if SQLITE_TEMP_STORE==0

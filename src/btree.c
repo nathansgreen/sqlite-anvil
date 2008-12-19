@@ -1442,6 +1442,9 @@ int sqlite3BtreeOpen(
     }
 #if HAVE_TOILET
     if( flags & BTREE_TOILET ){
+      if( flags & BTREE_ONLY_TOILET ){
+        printf("Toilet-only mode requested! (ignoring)\n");
+      }
       int r = sqlite3BtreeOpenToilet(pBt, zFilename, flags, vfsFlags);
       if( r < 0 ){
         rc = SQLITE_INTERNAL;
@@ -3366,7 +3369,6 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
           }
         }
         tpp_dtable_iter_value(pCur->toilet.cursor, &value);
-        /* ... */
         if( *pSize != tpp_blob_size(&value) ){
           Rprintf("SIZE ERROR %d != (toilet) %d [blob]\n", *pSize, tpp_blob_size(&value));
         }
