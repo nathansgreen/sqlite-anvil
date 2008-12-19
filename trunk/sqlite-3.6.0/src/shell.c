@@ -121,9 +121,10 @@ static int stdin_is_interactive = 1;
 
 #if HAVE_TOILET
 /*
-** Use toilet for data storage instead of btree files.
+** Use toilet for data storage in addition to or instead of btree files.
 */
 static int use_toilet = 1;
+static int use_only_toilet = 0;
 #endif
 
 /*
@@ -964,6 +965,9 @@ static void open_db(struct callback_data *p){
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
     if( use_toilet ){
       flags |= SQLITE_OPEN_TOILET;
+    }
+    if( use_only_toilet ){
+      flags |= SQLITE_OPEN_ONLY_TOILET;
     }
     sqlite3_open_v2(p->zDbFilename, &p->db, flags, NULL);
 #else
@@ -1893,6 +1897,7 @@ static const char zOptions[] =
   "   -batch               force batch I/O\n"
 #if HAVE_TOILET
   "   -notoilet            disable toilet mode\n"
+  "   -onlytoilet          use only toilet mode\n"
 #endif
   "   -column              set output mode to 'column'\n"
   "   -csv                 set output mode to 'csv'\n"
@@ -2052,6 +2057,10 @@ int main(int argc, char **argv){
 #if HAVE_TOILET
     }else if( strcmp(z,"-notoilet")==0 ){
       use_toilet = 0;
+      use_only_toilet = 0;
+    }else if( strcmp(z,"-onlytoilet")==0 ){
+      use_toilet = 1;
+      use_only_toilet = 1;
 #endif
     }else if( strcmp(z,"-help")==0 || strcmp(z, "--help")==0 ){
       usage(1);

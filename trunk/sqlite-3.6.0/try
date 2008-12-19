@@ -81,8 +81,8 @@ if [ -d dbt2/ ]
 then
 	DBT2_TMP=/tmp/dbt2-sqlite.$$
 	BUILD_DB=dbt2/scripts/sqlite/build_db.sh
-	# Use -t to disable toilet mode; requires a patched dbt2
-	#TOILET=-t
+	# Use -t to disable toilet mode, -T for toilet only mode; these require a patched dbt2
+	#TOILET=-T
 	echo "Running DBT2..."
 	mkdir $DBT2_TMP
 	if [ "$OPROFILE" ]

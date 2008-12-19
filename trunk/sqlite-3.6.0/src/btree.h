@@ -75,7 +75,8 @@ int sqlite3BtreeOpen(
 #define BTREE_READONLY      8  /* Open the database in read-only mode */
 #define BTREE_READWRITE    16  /* Open for both reading and writing */
 #define BTREE_CREATE       32  /* Create the database if it does not exist */
-#define BTREE_TOILET       64  /* Use toilet instead of a btree file */
+#define BTREE_TOILET       64  /* Use toilet in addition to a btree file */
+#define BTREE_ONLY_TOILET 128  /* Use toilet instead of a btree file */
 
 int sqlite3BtreeClose(Btree*);
 int sqlite3BtreeSetCacheSize(Btree*,int);
