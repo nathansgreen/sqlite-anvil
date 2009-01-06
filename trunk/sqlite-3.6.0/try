@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Uncomment to use valgrind
+#export VALGRIND="valgrind --trace-children=yes --leak-check=full"
+
 # Uncomment to enable patchgroup traces on the tests
 #TRACE_TEST="PATCHGROUP_TRACE=test.pgt"
 #TRACE_TPCC="PATCHGROUP_TRACE=tpcc.pgt"
@@ -56,7 +59,7 @@ then
 fi
 
 # Run the sqlite test
-(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TEST exec '"$WD/sqlite3"' sql-test) << EOF
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TEST exec $VALGRIND '"$WD/sqlite3"' sql-test) << EOF
 create table foo (bar int primary key, baz int);
 .explain on
 explain insert into foo (bar, baz) values (64, 10);
@@ -73,7 +76,7 @@ EOF
 find /mnt/test -type f -print0 | xargs -0 ls -l
 
 # Create the TPCC tables
-(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TPCC exec '"$WD/sqlite3"' tpcc-empty) < tpcc-create.sql
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TPCC exec $VALGRIND '"$WD/sqlite3"' tpcc-empty) < tpcc-create.sql
 find /mnt/test -type f -print0 | xargs -0 ls -l
 
 # Run DBT2
@@ -92,7 +95,7 @@ then
 		sudo opcontrol "--vmlinux=/usr/src/linux-`uname -r`/vmlinux"
 		sudo opcontrol --start
 	fi
-	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_DBT2 exec '"$WD/$BUILD_DB"' $TOILET -d sql-dbt2 -f $DBT2_TMP -g -w 1)
+	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_DBT2 exec $VALGRIND '"$WD/$BUILD_DB"' $TOILET -d sql-dbt2 -f $DBT2_TMP -g -w 1)
 	if [ "$OPROFILE" ]
 	then
 		sudo opcontrol --shutdown

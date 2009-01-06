@@ -317,7 +317,7 @@ struct MemPage {
 ** this structure.
 **
 ** For some database files, the same underlying database cache might be 
-** shared between multiple connections.  In that case, each contection
+** shared between multiple connections.  In that case, each connection
 ** has it own pointer to this object.  But each instance of this object
 ** points to the same BtShared object.  The database cache and the
 ** schema associated with the database file are all contained within
@@ -354,6 +354,7 @@ struct Btree {
 #if HAVE_TOILET
 typedef struct BtToilet BtToilet;
 struct BtToilet {
+  int only;                 /* Nonzero for toilet-only */
   struct tx_handle tx;      /* The transaction handle */
   int dir_fd;               /* The containing directory */
   tpp_params *config;       /* The config for dtables */
