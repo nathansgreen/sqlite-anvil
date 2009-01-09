@@ -3909,7 +3909,10 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
   assert( cursorHoldsMutex(pCur) );
   if( pCur->eState==CURSOR_VALID ){
 #if HAVE_TOILET
-    const void *data = (const void*)fetchPayload(pCur, pAmt, 0);
+    const void *data;
+    if( !pCur->pBt->toilet.only ){
+      data = (const void*)fetchPayload(pCur, pAmt, 0);
+    }
     if( pCur->toilet.dtable ){
       if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
         tpp_dtype key;
@@ -3918,28 +3921,35 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
         if( pCur->toilet.flags & BTREE_INTKEY ){
           assert(tpp_dtype_get_type(&key) == DT_UINT32);
           tpp_dtype_get_int(&key, &pCur->toilet.fetch_key);
-          if( *pAmt != sizeof(pCur->toilet.fetch_key) && *pAmt ){
+          /* endianness? */
+          key_data = &pCur->toilet.fetch_key;
+          if( pCur->pBt->toilet.only ){
+            *pAmt = sizeof(pCur->toilet.fetch_key);
+            /* apparently *pAmt should be 0 for integer key tables */
+            *pAmt = 0;
+          }else if( *pAmt != sizeof(pCur->toilet.fetch_key) && *pAmt ){
             /* apparently (see fetchPayload() above), *pAmt will always be 0 for integer key tables */
             Yprintf("WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
           }
-          /* endianness? */
-          key_data = &pCur->toilet.fetch_key;
         }else{
           tpp_blob value;
           tpp_dtype_get_blb(&key, &value);
           key_data = tpp_blob_data(&value);
-          if( *pAmt != tpp_blob_size(&value) ){
+          if( pCur->pBt->toilet.only ){
+            /* somebody else still has a copy of this blob in toilet,
+             * so we can return it even after killing this one */
+            *pAmt = tpp_blob_size(&value);
+          }else if( *pAmt != tpp_blob_size(&value) ){
             Rprintf("WHOA: key size (%d) [blob] != *pAmt (%d)!\n", tpp_blob_size(&value), *pAmt);
           }
-          /* somebody else still has a copy of this blob in toilet,
-           * so we can return it even after killing this one */
           tpp_blob_kill(&value);
           tpp_dtype_kill(&key);
         }
-        if( memcmp(key_data, data, *pAmt) ){
+        if( pCur->pBt->toilet.only ){
+          data = key_data;
+        }else if( memcmp(key_data, data, *pAmt) ){
           Rprintf("DATA ERROR (toilet) key\n");
         }
-        /* can return "key_data" */
       }else{
         Rprintf("MISSING TOILET KEY\n");
       }
@@ -3952,11 +3962,11 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
   return 0;
 }
 const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
-  Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
+  Dprintf("\"%s\", %d (%p)", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pCur);
   assert( cursorHoldsMutex(pCur) );
   if( pCur->eState==CURSOR_VALID ){
 #if HAVE_TOILET
-    const void *data = NULL;
+    const void *data;
     if( !pCur->pBt->toilet.only ){
       data = (const void*)fetchPayload(pCur, pAmt, 1);
     }
@@ -3968,13 +3978,13 @@ const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
       tpp_dtable_iter_value(pCur->toilet.cursor, &value);
       size = tpp_blob_size(&value);
       blob = tpp_blob_data(&value);
-      min = (*pAmt < size) ? *pAmt : size;
       if( pCur->pBt->toilet.only ){
-        *pAmt = min;
+        *pAmt = size;
         /* somebody else still has a copy of this blob in toilet,
          * so we can return it even after killing this one below */
         data = blob;
       }else{
+        min = (*pAmt < size) ? *pAmt : size;
         if( min != *pAmt ){
           Rprintf("WHOA: [blob] min (%d) != *pAmt (%d)!\n", min, *pAmt);
         }
@@ -7450,7 +7460,8 @@ int sqlite3BtreeFlags(BtCursor *pCur){
 #if HAVE_TOILET
   if( pCur->pBt->toilet.only ){
     assert(pCur->toilet.dtable);
-    return pCur->toilet.flags;
+    Dprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->toilet.flags | PTF_LEAF);
+    return pCur->toilet.flags | PTF_LEAF;
   }
 #endif
   pPage = pCur->pPage;
@@ -7459,7 +7470,7 @@ int sqlite3BtreeFlags(BtCursor *pCur){
   Dprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pPage ? pPage->aData[pPage->hdrOffset] : 0);
 #if HAVE_TOILET
   if( pCur->toilet.dtable && pPage ){
-    /* NOTE: bit 3 (0x8) seems to be random, but bits 0-2 are 0x5 (intkey+leafdata) for
+    /* NOTE: bit 3 (0x8) is PTF_LEAF, and bits 0-2 are 0x5 (intkey+leafdata) for
      * tables and 0x2 (zerodata) for indices (these were the flags to CreateTable) */
     if( (pPage->aData[pPage->hdrOffset] & 0x7) != pCur->toilet.flags ){
       Rprintf("ERROR \"\":%d flags 0x%X != (toilet) 0x%X\n", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->toilet.flags);
