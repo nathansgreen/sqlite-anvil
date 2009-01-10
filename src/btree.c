@@ -3962,7 +3962,7 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
   return 0;
 }
 const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
-  Dprintf("\"%s\", %d (%p)", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pCur);
+  Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
   if( pCur->eState==CURSOR_VALID ){
 #if HAVE_TOILET
