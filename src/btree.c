@@ -4295,14 +4295,16 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
     {
       /* XXX FIXME */
       Rprintf("UNIMPLEMENTED TOILET SEEK (nKey)\n");
-      return 0;
+      return -1;
     }
     tpp_dtype_int(&key, nKey);
     r = tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
     if(r)
     {
       /* found it */
-      if(*pRes)
+      if(pCur->pBt->toilet.only)
+        *pRes = 0;
+      else if(*pRes)
         Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
       r = 0;
     }
@@ -4310,7 +4312,9 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
     {
       if(!tpp_dtable_iter_valid(pCur->toilet.cursor))
       {
-        if( *pRes >= 0 )
+        if(pCur->pBt->toilet.only)
+          *pRes = -1;
+        else if(*pRes >= 0)
           Rprintf("SEEK ERROR %d != (toilet) [invalid]\n", *pRes);
       }
       else
@@ -4318,7 +4322,7 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
         uint32_t id;
         tpp_dtable_iter_key(pCur->toilet.cursor, &key);
         tpp_dtype_get_int(&key, &id);
-        if(*pRes < 0 && id >= nKey)
+        if(!pCur->pBt->toilet.only && *pRes < 0 && id >= nKey)
         {
           /* THIS IS A HACK */
           /* The default btree code is lazy, and won't find the actual key in
@@ -4337,17 +4341,23 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
         }
         if(nKey < id)
         {
-          if(*pRes <= 0)
+          if(pCur->pBt->toilet.only)
+            *pRes = 1;
+          else if(*pRes <= 0)
             Rprintf("SEEK ERROR %d != (toilet) 1\n", *pRes);
         }
         else if(nKey > id)
         {
-          if(*pRes >= 0)
+          if(pCur->pBt->toilet.only)
+            *pRes = -1;
+          else if(*pRes >= 0)
             Rprintf("SEEK ERROR %d != (toilet) -1\n", *pRes);
         }
         else
         {
-          if(*pRes)
+          if(pCur->pBt->toilet.only)
+            *pRes = 0;
+          else if(*pRes)
             Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
         }
       }
@@ -4359,7 +4369,9 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
     if(r)
     {
       /* found it */
-      if(*pRes)
+      if(pCur->pBt->toilet.only)
+        *pRes = 0;
+      else if(*pRes)
         Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
       r = 0;
     }
@@ -4367,7 +4379,9 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
     {
       if(!tpp_dtable_iter_valid(pCur->toilet.cursor))
       {
-        if(*pRes >= 0)
+        if(pCur->pBt->toilet.only)
+          *pRes = -1;
+        else if(*pRes >= 0)
           Rprintf("SEEK ERROR %d != (toilet) [invalid, blob]\n", *pRes);
       }
       else
@@ -4383,7 +4397,7 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
         data = tpp_blob_data(&blob);
         size = tpp_blob_size(&blob);
         c = sqlite3VdbeRecordCompare(size, data, pUnKey);
-        if(*pRes < 0 && c >= 0)
+        if(!pCur->pBt->toilet.only && *pRes < 0 && c >= 0)
         {
           /* THIS IS A HACK */
           /* The default btree code is lazy, and won't find the actual key in
@@ -4419,17 +4433,23 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
         tpp_blob_kill(&blob);
         if(c > 0)
         {
-          if(*pRes <= 0)
+          if(pCur->pBt->toilet.only)
+            *pRes = 1;
+          else if(*pRes <= 0)
             Rprintf("SEEK ERROR %d != (toilet) 1 [blob]\n", *pRes);
         }
         else if(c < 0)
         {
-          if(*pRes >= 0)
+          if(pCur->pBt->toilet.only)
+            *pRes = -1;
+          else if(*pRes >= 0)
             Rprintf("SEEK ERROR %d != (toilet) -1 [blob]\n", *pRes);
         }
         else
         {
-          if(*pRes)
+          if(pCur->pBt->toilet.only)
+            *pRes = 0;
+          else if(*pRes)
             Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
         }
       }
