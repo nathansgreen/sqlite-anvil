@@ -3775,6 +3775,9 @@ int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
   rc = restoreCursorPosition(pCur);
   if( rc==SQLITE_OK ){
     assert( pCur->eState==CURSOR_VALID );
+#if HAVE_TOILET
+    if (!pCur->pBt->toilet.only ){
+#endif
     assert( pCur->pPage!=0 );
     if( pCur->pPage->intKey ){
       return SQLITE_CORRUPT_BKPT;
@@ -3782,9 +3785,40 @@ int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
     assert( pCur->pPage->intKey==0 );
     assert( pCur->idx>=0 && pCur->idx<pCur->pPage->nCell );
     rc = accessPayload(pCur, offset, amt, (unsigned char*)pBuf, 0, 0);
+#if HAVE_TOILET
+    }
+    if( pCur->toilet.dtable && rc == SQLITE_OK ){
+      uint32_t size;
+      tpp_dtype key;
+      const void *data;
+      assert(tpp_dtable_iter_valid(pCur->toilet.cursor));
+      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+      if( pCur->toilet.flags & BTREE_INTKEY ){
+        assert(tpp_dtype_get_type(&key) == DT_UINT32);
+        tpp_dtype_get_int(&key, &pCur->toilet.fetch_key);
+        size = sizeof(pCur->toilet.fetch_key);
+        /* endianness? */
+        data = &pCur->toilet.fetch_key;
+      }else{
+        tpp_blob value;
+        tpp_dtype_get_blb(&key, &value);
+        size = tpp_blob_size(&value);
+        data = tpp_blob_data(&value);
+        /* somebody else still has a copy of this blob in toilet,
+         * so we can copy it even after killing this one */
+        tpp_blob_kill(&value);
+        tpp_dtype_kill(&key);
+      }
+      /* XXX check size? */
+      if( pCur->pBt->toilet.only ){
+        memcpy(pBuf, data + offset, amt);
+      }else if( memcmp(pBuf, data + offset, amt) ){
+        Rprintf("DATA ERROR (toilet) key\n");
+      }
+    }
+#endif
   }
   return rc;
-#warning how come we do not have toilet code here?
 }
 
 /*
@@ -3826,12 +3860,12 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
       tpp_dtable_iter_value(pCur->toilet.cursor, &value);
       size = tpp_blob_size(&value);
       data = tpp_blob_data(&value);
+      /* XXX check size? */
       if( pCur->pBt->toilet.only ){
         memcpy(pBuf, data + offset, amt);
       }else if( memcmp(pBuf, data + offset, amt) ){
         Rprintf("DATA ERROR (toilet) blob\n");
       }
-      /* XXX check size? */
       tpp_blob_kill(&value);
     }
 #endif
@@ -4331,13 +4365,13 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
         {
           /* THIS IS A HACK */
           /* The default btree code is lazy, and won't find the actual key in
-           * many cases. Instead, it only finds the leaf page that would
-           * contain the key, if it existed - even if it does exist. The
-           * cursor seems to be left pointing at the first entry of that page,
-           * which will be less than (or equal to) the requested key. So we
-           * move the toilet cursor backwards to find the same entry, even
-           * though this is not really necessary. Later when we are not
-           * comparing every result to the original btree code we can stop. */
+           * many cases. Instead, it only finds the leaf page that would contain
+           * the key, if it existed - even if it does exist. The cursor seems to
+           * be left pointing at the first entry of that page, which will be
+           * less than (or equal to) the requested key. So we move the toilet
+           * cursor backwards to find the same entry, even though this is not
+           * really necessary. We only need to do this when we are running
+           * toilet alongside the btree code and comparing the results. */
           Yprintf("%s(): toilet matching btree laziness with horrible hack\n", __FUNCTION__);
           tpp_dtype_int(&key, pCur->info.nKey);
           tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
@@ -4406,13 +4440,13 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
         {
           /* THIS IS A HACK */
           /* The default btree code is lazy, and won't find the actual key in
-           * many cases. Instead, it only finds the leaf page that would
-           * contain the key, if it existed - even if it does exist. The
-           * cursor seems to be left pointing at the first entry of that page,
-           * which will be less than (or equal to) the requested key. So we
-           * move the toilet cursor backwards to find the same entry, even
-           * though this is not really necessary. Later when we are not
-           * comparing every result to the original btree code we can stop. */
+           * many cases. Instead, it only finds the leaf page that would contain
+           * the key, if it existed - even if it does exist. The cursor seems to
+           * be left pointing at the first entry of that page, which will be
+           * less than (or equal to) the requested key. So we move the toilet
+           * cursor backwards to find the same entry, even though this is not
+           * really necessary. We only need to do this when we are running
+           * toilet alongside the btree code and comparing the results. */
           int bts;
           const uint8_t * btk;
           tpp_dtable * save = pCur->toilet.dtable;
