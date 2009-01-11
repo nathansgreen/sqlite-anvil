@@ -3,6 +3,9 @@
 # Uncomment to use valgrind
 #export VALGRIND="valgrind --trace-children=yes --leak-check=full"
 
+# Uncomment to do IO counting
+#export IO_COUNT='LD_PRELOAD=$TOILET/io_count.so IO_COUNT_REQUIRE=libtoilet'
+
 # Uncomment to enable patchgroup traces on the tests
 #TRACE_TEST="PATCHGROUP_TRACE=test.pgt"
 #TRACE_TPCC="PATCHGROUP_TRACE=tpcc.pgt"
@@ -34,6 +37,23 @@ then
 	exit 1
 fi
 
+if [ "$IO_COUNT" ]
+then
+	# We use sqlite3 rather than lt-sqlite3 since the latter may not exist yet
+	if [ -f .libs/sqlite3 ]
+	then
+		TOILET="`ldd .libs/sqlite3 | grep /libtoilet.so | sed -e 's/^.*=> \(.*\)\/libtoilet.so .*$/\1/'`"
+		if [ ! "$TOILET" ]
+		then
+			echo "Cannot find toilet; disabling IO counting." >&2
+			IO_COUNT=
+		fi
+	else
+		echo "Cannot find .libs/sqlite3; disabling IO counting." >&2
+		IO_COUNT=
+	fi
+fi
+
 if mount | grep -q "on /mnt/test"
 then
 	echo "/mnt/test is mounted; unmount before running this script."
@@ -59,7 +79,7 @@ then
 fi
 
 # Run the sqlite test
-(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TEST exec $VALGRIND '"$WD/sqlite3"' sql-test) << EOF
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $IO_COUNT $TRACE_TEST exec $VALGRIND '"$WD/sqlite3"' sql-test) << EOF
 create table foo (bar int primary key, baz int);
 .explain on
 explain insert into foo (bar, baz) values (64, 10);
@@ -76,16 +96,16 @@ EOF
 find /mnt/test -type f -print0 | xargs -0 ls -l
 
 # Create the TPCC tables
-(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_TPCC exec $VALGRIND '"$WD/sqlite3"' tpcc-empty) < tpcc-create.sql
+(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $IO_COUNT $TRACE_TPCC exec $VALGRIND '"$WD/sqlite3"' tpcc-empty) < tpcc-create.sql
 find /mnt/test -type f -print0 | xargs -0 ls -l
 
-# Run DBT2
+# Run DBT2 loading
 if [ -d dbt2/ ]
 then
 	DBT2_TMP=/tmp/dbt2-sqlite.$$
 	BUILD_DB=dbt2/scripts/sqlite/build_db.sh
 	# Use -t to disable toilet mode, -T for toilet only mode; these require a patched dbt2
-	#TOILET=-T
+	#MODE=-T
 	echo "Running DBT2..."
 	mkdir $DBT2_TMP
 	if [ "$OPROFILE" ]
@@ -95,7 +115,7 @@ then
 		sudo opcontrol "--vmlinux=/usr/src/linux-`uname -r`/vmlinux"
 		sudo opcontrol --start
 	fi
-	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $TRACE_DBT2 exec $VALGRIND '"$WD/$BUILD_DB"' $TOILET -d sql-dbt2 -f $DBT2_TMP -g -w 1)
+	(WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $IO_COUNT $TRACE_DBT2 exec $VALGRIND '"$WD/$BUILD_DB"' $MODE -d sql-dbt2 -f $DBT2_TMP -g -w 1)
 	if [ "$OPROFILE" ]
 	then
 		sudo opcontrol --shutdown

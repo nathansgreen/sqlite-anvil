@@ -1202,20 +1202,25 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
 {
   /* all right, screw this idiotic indenting style, I'm using mine */
   int r, i, fresh = 0;
-  /* XXX HACK */
-  char * toilet_name = malloc(strlen(zFilename) + 8);
-  strcpy(toilet_name, zFilename);
-  strcat(toilet_name, ".toilet");
+  char * toilet_name = NULL;
+  if(!pBt->toilet.only)
+  {
+    /* XXX HACK */
+    toilet_name = malloc(strlen(zFilename) + 8);
+    strcpy(toilet_name, zFilename);
+    strcat(toilet_name, ".toilet");
+    zFilename = toilet_name;
+  }
   TX_HANDLE_INIT(pBt->toilet.tx);
-  pBt->toilet.dir_fd = open(toilet_name, 0);
+  pBt->toilet.dir_fd = open(zFilename, 0);
   if(pBt->toilet.dir_fd < 0)
   {
     if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
       goto fail_free;
-    r = mkdir(toilet_name, 0775);
+    r = mkdir(zFilename, 0775);
     if(r < 0)
       goto fail_free;
-    pBt->toilet.dir_fd = open(toilet_name, 0);
+    pBt->toilet.dir_fd = open(zFilename, 0);
     if(pBt->toilet.dir_fd < 0)
     {
     fail_free:
