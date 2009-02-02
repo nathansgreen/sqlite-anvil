@@ -3118,7 +3118,7 @@ create_cursor_exception:
 static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user)
 {
   int c;
-  char aSpace[200];
+  char aSpace[248];
   struct KeyInfo * pKeyInfo = (struct KeyInfo *) user;
   UnpackedRecord * key2 = sqlite3VdbeRecordUnpack(pKeyInfo, s2, b2, aSpace, sizeof(aSpace));
   assert(key2);
@@ -3946,9 +3946,13 @@ static const unsigned char *fetchPayload(
 const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
-  if( pCur->eState==CURSOR_VALID ){
 #if HAVE_TOILET
-    const void *data;
+  if( pCur->eState==CURSOR_VALID || pCur->pBt->toilet.only ){
+#else
+  if( pCur->eState==CURSOR_VALID ){
+#endif
+#if HAVE_TOILET
+    const void *data = NULL;
     if( !pCur->pBt->toilet.only ){
       data = (const void*)fetchPayload(pCur, pAmt, 0);
     }
