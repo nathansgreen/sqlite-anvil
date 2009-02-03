@@ -78,7 +78,7 @@ then
 	echo "done."
 fi
 
-# Run the sqlite test
+# Run the foobar test
 (WD="`pwd`"; cd /mnt/test; ulimit -c unlimited; eval $IO_COUNT $TRACE_TEST exec $VALGRIND '"$WD/sqlite3"' sql-test) << EOF
 create table foo (bar int primary key, baz int);
 .explain on
@@ -104,8 +104,8 @@ if [ -d dbt2/ ]
 then
 	DBT2_TMP=/tmp/dbt2-sqlite.$$
 	BUILD_DB=dbt2/scripts/sqlite/build_db.sh
-	# Use -t to disable toilet mode, -T for toilet only mode; these require a patched dbt2
-	#MODE=-T
+	# Use -t to disable toilet mode, -T for toilet only mode, -r to randomize data; these require a patched dbt2
+	#MODE="-T"
 	echo "Running DBT2..."
 	mkdir $DBT2_TMP
 	if [ "$OPROFILE" ]
@@ -122,6 +122,7 @@ then
 		sudo opcontrol --deinit
 		opreport --symbols .libs/lt-sqlite3 > "$OPROFILE"
 	fi
+	wc -l $DBT2_TMP/*
 	rm -rf $DBT2_TMP
 	find /mnt/test -type f -print0 | xargs -0 ls -l
 fi
@@ -157,6 +158,8 @@ done
 if [ -f /mnt/test/core ]
 then
 	echo "Starting debugger on core."
-	gdb -q -c /mnt/test/core .libs/lt-sqlite3
+	BIN=.libs/lt-sqlite3
+	[ -x .libs/lt-sqlite3 ] || BIN=sqlite3
+	gdb -q -c /mnt/test/core $BIN
 fi
 sudo umount /mnt/test
