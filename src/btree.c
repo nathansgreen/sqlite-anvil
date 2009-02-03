@@ -19,7 +19,7 @@
 #include "btreeInt.h"
 #include "vdbeInt.h"
 
-#define TOILET_VERBOSITY 1
+#define TOILET_VERBOSITY 2
 
 #define _GRAY "\e[0m"
 #define _RED "\e[1m\e[31m"
@@ -1437,6 +1437,11 @@ int sqlite3BtreeOpen(
     }
 #if HAVE_TOILET
     if( flags & BTREE_TOILET ){
+      if( !zFilename || isMemdb ){
+        /* FIXME: we could/should handle doing temporary databases, maybe */
+        Yprintf("Not using requested toilet mode for %s database.\n", zFilename ? "memory" : "temporary");
+        goto nevermind;
+      }
       Bprintf("Using toilet for data storage.\n");
       if( flags & BTREE_ONLY_TOILET ){
         pBt->toilet.only = 1;
@@ -1449,6 +1454,7 @@ int sqlite3BtreeOpen(
       }
     }else{
       /* this is how we know it's not open */
+    nevermind:
       pBt->toilet.dir_fd = -1;
     }
     if( !pBt->toilet.only ){ /* don't indent for this */
