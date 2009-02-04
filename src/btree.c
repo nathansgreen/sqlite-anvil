@@ -19,7 +19,7 @@
 #include "btreeInt.h"
 #include "vdbeInt.h"
 
-#define TOILET_VERBOSITY 2
+#define TOILET_VERBOSITY 5
 
 #define _GRAY "\e[0m"
 #define _RED "\e[1m\e[31m"
@@ -6936,6 +6936,9 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     return rc;
   }
 
+#if HAVE_TOILET
+	if( !pBt->toilet.only ){
+#endif
   /* Locate the cell within its page and leave pCell pointing to the
   ** data. The clearCell() call frees any overflow pages associated with the
   ** cell. The cell itself is still intact.
@@ -6949,11 +6952,6 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     return rc;
   }
 
-#if HAVE_TOILET
-  if( pBt->toilet.only ){
-    rc = SQLITE_OK;
-  }else
-#endif
   if( !pPage->leaf ){
     /*
     ** The entry we are about to delete is not a leaf so if we do not
@@ -7004,6 +7002,11 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     dropCell(pPage, pCur->idx, cellSizePtr(pPage, pCell));
     rc = balance(pPage, 0);
   }
+#if HAVE_TOILET
+	}else{
+		rc = SQLITE_OK;
+	}
+#endif
   if( rc==SQLITE_OK ){
 #if HAVE_TOILET
     if( pCur->toilet.dtable ){
