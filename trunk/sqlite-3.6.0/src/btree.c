@@ -2915,6 +2915,9 @@ int sqlite3BtreeRollback(Btree *p){
     }
     rc = SQLITE_OK;
   }
+  if( !pBt->toilet.only )
+    /* make sure not to put other stuff after here
+     * and before the TRANS_WRITE if block below */
 #endif
 
   if( p->inTrans==TRANS_WRITE ){
