@@ -6891,6 +6891,9 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   Dprintf("\"%s\", %d", sqlite3BtreeGetFilename(pCur->pBtree), pCur->idx);
 
   assert( cursorHoldsMutex(pCur) );
+#if HAVE_TOILET
+  if( !pBt->toilet.only )
+#endif
   assert( pPage->isInit );
   if( pBt->inTransaction!=TRANS_WRITE ){
     /* Must start a transaction before doing a delete */
@@ -6901,6 +6904,9 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   if( pCur->eState==CURSOR_FAULT ){
     return pCur->skip;
   }
+#if HAVE_TOILET
+  if( !pBt->toilet.only )
+#endif
   if( pCur->idx >= pPage->nCell ){
     return SQLITE_ERROR;  /* The cursor is not pointing to anything */
   }
@@ -6919,6 +6925,9 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   if( 
     (rc = restoreCursorPosition(pCur))!=0 ||
     (rc = saveAllCursors(pBt, pCur->pgnoRoot, pCur))!=0 ||
+#if HAVE_TOILET
+    !pBt->toilet.only &&
+#endif
     (rc = sqlite3PagerWrite(pPage->pDbPage))!=0
   ){
     return rc;
@@ -6937,6 +6946,11 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     return rc;
   }
 
+#if HAVE_TOILET
+  if( pBt->toilet.only ){
+    rc = SQLITE_OK;
+  }else
+#endif
   if( !pPage->leaf ){
     /*
     ** The entry we are about to delete is not a leaf so if we do not
@@ -6988,6 +7002,22 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     rc = balance(pPage, 0);
   }
   if( rc==SQLITE_OK ){
+#if HAVE_TOILET
+    if( pCur->toilet.dtable ){
+      tpp_dtype key;
+      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
+      rc = tpp_dtable_remove(pCur->toilet.dtable, &key);
+      if( rc >= 0 ){
+        tpp_dtable_iter_first(pCur->toilet.cursor);
+        rc = SQLITE_OK;
+      }else{
+        rc = SQLITE_INTERNAL;
+      }
+      tpp_dtype_kill(&key);
+    }
+    /* hmm, do we need to seek to where the btree cursor is about to go? */
+    if( !pBt->toilet.only )
+#endif
     moveToRoot(pCur);
   }
   return rc;
