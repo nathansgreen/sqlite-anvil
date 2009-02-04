@@ -2982,6 +2982,11 @@ int sqlite3BtreeBeginStmt(Btree *p){
     rc = pBt->readOnly ? SQLITE_READONLY : SQLITE_ERROR;
   }else{
     assert( pBt->inTransaction==TRANS_WRITE );
+#if HAVE_TOILET
+    if( pBt->toilet.only )
+      rc = SQLITE_OK;
+    else
+#endif
     rc = pBt->readOnly ? SQLITE_OK : sqlite3PagerStmtBegin(pBt->pPager);
     pBt->inStmt = 1;
   }
@@ -3001,6 +3006,9 @@ int sqlite3BtreeCommitStmt(Btree *p){
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
+#if HAVE_TOILET
+    if( !pBt->toilet.only )
+#endif
     rc = sqlite3PagerStmtCommit(pBt->pPager);
   }else{
     rc = SQLITE_OK;
@@ -3025,6 +3033,10 @@ int sqlite3BtreeRollbackStmt(Btree *p){
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
+#if HAVE_TOILET
+    Yprintf("%s(): not rolling back toilet (will commit instead)\n", __FUNCTION__);
+    if( !pBt->toilet.only )
+#endif
     rc = sqlite3PagerStmtRollback(pBt->pPager);
     pBt->inStmt = 0;
   }
@@ -3165,7 +3177,7 @@ static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKey
     if(!copy->enc)
     {
       /* er... where would we get this, I wonder? */
-      Yprintf("No string encoding specified, assuming UTF8.\n");
+      Bprintf("No string encoding specified, assuming UTF8.\n");
       copy->enc = SQLITE_UTF8;
     }
     if(pKeyInfo->aSortOrder)
@@ -4013,7 +4025,11 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
 const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
+#if HAVE_TOILET
+  if( pCur->eState==CURSOR_VALID || pCur->pBt->toilet.only ){
+#else
   if( pCur->eState==CURSOR_VALID ){
+#endif
 #if HAVE_TOILET
     const void *data;
     if( !pCur->pBt->toilet.only ){
