@@ -459,6 +459,7 @@ int sqlite3BtreeCursorHasMoved(BtCursor *pCur, int *pHasMoved){
   }else{
     *pHasMoved = 0;
   }
+  Dprintf("\"%s\", -> %d", sqlite3BtreeGetFilename(pCur->pBtree), *pHasMoved);
   return SQLITE_OK;
 }
 
@@ -3239,7 +3240,7 @@ int sqlite3BtreeCursor(
       pCur->pNext->pPrev = pCur;
     }
     p->pBt->pCursor = pCur;
-    pCur->eState = CURSOR_INVALID;
+    pCur->eState = CURSOR_VALID;
   }
   if( p->pBt->toilet.dir_fd >= 0 && rc == SQLITE_OK ){
     int r = sqlite3BtreeCursorToilet(p, iTable, pKeyInfo, pCur);
