@@ -6890,11 +6890,14 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   BtShared *pBt = p->pBt;
   Dprintf("\"%s\", %d", sqlite3BtreeGetFilename(pCur->pBtree), pCur->idx);
 
-  assert( cursorHoldsMutex(pCur) );
 #if HAVE_TOILET
-  if( !pBt->toilet.only )
+  if( !pBt->toilet.only ){
 #endif
+  assert( cursorHoldsMutex(pCur) );
   assert( pPage->isInit );
+#if HAVE_TOILET
+  }
+#endif
   if( pBt->inTransaction!=TRANS_WRITE ){
     /* Must start a transaction before doing a delete */
     rc = pBt->readOnly ? SQLITE_READONLY : SQLITE_ERROR;
