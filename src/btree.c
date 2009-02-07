@@ -3011,7 +3011,9 @@ int sqlite3BtreeCommitStmt(Btree *p){
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
 #if HAVE_TOILET
-    if( !pBt->toilet.only )
+    if( pBt->toilet.only ){
+      rc = SQLITE_OK;
+    }else
 #endif
     rc = sqlite3PagerStmtCommit(pBt->pPager);
   }else{
@@ -6937,7 +6939,7 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   }
 
 #if HAVE_TOILET
-	if( !pBt->toilet.only ){
+  if( !pBt->toilet.only ){
 #endif
   /* Locate the cell within its page and leave pCell pointing to the
   ** data. The clearCell() call frees any overflow pages associated with the
@@ -7003,9 +7005,9 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     rc = balance(pPage, 0);
   }
 #if HAVE_TOILET
-	}else{
-		rc = SQLITE_OK;
-	}
+  }else{
+    rc = SQLITE_OK;
+  }
 #endif
   if( rc==SQLITE_OK ){
 #if HAVE_TOILET
