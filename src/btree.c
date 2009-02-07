@@ -4526,6 +4526,8 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
       }
     }
   }
+  if(pCur->pBt->toilet.only)
+    pCur->eState = tpp_dtable_iter_valid(pCur->toilet.cursor) ? CURSOR_VALID : CURSOR_INVALID;
   return r;
 }
 #endif
@@ -4826,6 +4828,7 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
       if( !rc ){
         tpp_dtable_iter_prev(pCur->toilet.cursor);
       }
+      pCur->eState = tpp_dtable_iter_valid(pCur->toilet.cursor) ? CURSOR_VALID : CURSOR_INVALID;
       *pRes = !rc;
       return SQLITE_OK;
     }
@@ -4925,6 +4928,7 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
     }
     rc = tpp_dtable_iter_prev(pCur->toilet.cursor);
     if( pCur->pBt->toilet.only ){
+      pCur->eState = tpp_dtable_iter_valid(pCur->toilet.cursor) ? CURSOR_VALID : CURSOR_INVALID;
       *pRes = !rc;
       return SQLITE_OK;
     }
