@@ -1231,11 +1231,13 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
   }
   free(toilet_name);
   
-  pBt->toilet.config = tpp_params_new();
-  if(!pBt->toilet.config)
+  pBt->toilet.tbl_config = tpp_params_new();
+  if(!pBt->toilet.tbl_config)
     goto fail_close;
-  /* should we use ustr_dtable here at all? */
-  r = tpp_params_parse(pBt->toilet.config, TOILET_CONFIG_LITERAL(
+  pBt->toilet.idx_config = tpp_params_new();
+  if(!pBt->toilet.idx_config)
+    goto fail_tbl_params;
+  r = tpp_params_parse(pBt->toilet.tbl_config, TOILET_CONFIG_LITERAL(
     config [
       "cache_size" int 40000
       "base" class(dt) managed_dtable
@@ -1249,15 +1251,26 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
       ]
     ]));
   if(r < 0)
-    goto fail_params;
+    goto fail_idx_params;
+  r = tpp_params_parse(pBt->toilet.idx_config, TOILET_CONFIG_LITERAL(
+    config [
+      "cache_size" int 40000
+      "base" class(dt) managed_dtable
+      "base_config" config [
+        "base" class simple_dtable
+        "digest_on_close" bool true
+      ]
+    ]));
+  if(r < 0)
+    goto fail_idx_params;
   r = TX_START(pBt->toilet.tx);
   if(r < 0)
-    goto fail_params;
-  pBt->toilet.cache = tpp_dtable_cache_new(pBt->toilet.dir_fd, "cache_dtable", pBt->toilet.config);
+    goto fail_idx_params;
+  pBt->toilet.cache = tpp_dtable_cache_new(pBt->toilet.dir_fd, "cache_dtable");
   if(!pBt->toilet.cache)
-    goto fail_params;
+    goto fail_idx_params;
   
-  pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0);
+  pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0, pBt->toilet.tbl_config);
   if(!pBt->toilet.root)
   {
     tpp_dtype key;
@@ -1265,10 +1278,10 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
     tpp_blob value_blob;
     if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
       goto fail_cache;
-    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 0, DT_UINT32);
+    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 0, pBt->toilet.tbl_config, DT_UINT32);
     if(r < 0)
       goto fail_cache;
-    pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0);
+    pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0, pBt->toilet.tbl_config);
     if(!pBt->toilet.root)
       goto fail_cache;
     
@@ -1296,15 +1309,15 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
       goto fail_root;
   }
   
-  pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1);
+  pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1, pBt->toilet.tbl_config);
   if(!pBt->toilet.one)
   {
     if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
       goto fail_root;
-    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 1, DT_UINT32);
+    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 1, pBt->toilet.tbl_config, DT_UINT32);
     if(r < 0)
       goto fail_root;
-    pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1);
+    pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1, pBt->toilet.tbl_config);
     if(!pBt->toilet.one)
       goto fail_root;
   }
@@ -1315,8 +1328,10 @@ fail_root:
   tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
 fail_cache:
   tpp_dtable_cache_kill(pBt->toilet.cache);
-fail_params:
-  tpp_params_kill(pBt->toilet.config);
+fail_idx_params:
+  tpp_params_kill(pBt->toilet.idx_config);
+fail_tbl_params:
+  tpp_params_kill(pBt->toilet.tbl_config);
 fail_close:
   close(pBt->toilet.dir_fd);
   pBt->toilet.dir_fd = -1;
@@ -1576,7 +1591,8 @@ btree_open_out:
       tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
       tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
       tpp_dtable_cache_kill(pBt->toilet.cache);
-      tpp_params_kill(pBt->toilet.config);
+      tpp_params_kill(pBt->toilet.idx_config);
+      tpp_params_kill(pBt->toilet.tbl_config);
       close(pBt->toilet.dir_fd);
       TX_CLEANUP(pBt->toilet.tx);
     }
@@ -1698,7 +1714,8 @@ int sqlite3BtreeClose(Btree *p){
       tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
       tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
       tpp_dtable_cache_kill(pBt->toilet.cache);
-      tpp_params_kill(pBt->toilet.config);
+      tpp_params_kill(pBt->toilet.idx_config);
+      tpp_params_kill(pBt->toilet.tbl_config);
       close(pBt->toilet.dir_fd);
       TX_END(pBt->toilet.tx); /* technically TX_CLEANUP will do this */
       TX_CLEANUP(pBt->toilet.tx);
@@ -3155,12 +3172,14 @@ static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKey
   int r = -1;
   tpp_dtype key;
   tpp_blob value;
+  tpp_params * config;
   
   tpp_dtype_int(&key, iTable);
   tpp_dtable_find(p->pBt->toilet.root, &key, &value);
   pCur->toilet.flags = *(int *) tpp_blob_data(&value);
   
-  pCur->toilet.dtable = tpp_dtable_cache_open(p->pBt->toilet.cache, iTable);
+  config = (pCur->toilet.flags & BTREE_INTKEY) ? p->pBt->toilet.tbl_config : p->pBt->toilet.idx_config;
+  pCur->toilet.dtable = tpp_dtable_cache_open(p->pBt->toilet.cache, iTable, config);
   if(!pCur->toilet.dtable)
     return -1;
   if(!(pCur->toilet.flags & BTREE_INTKEY))
@@ -7041,6 +7060,7 @@ static int sqlite3BtreeCreateTableToilet(Btree * p, int * piTable, int flags)
   /* all right, screw this idiotic indenting style, I'm using mine */
   tpp_dtype key;
   tpp_blob value;
+  tpp_params * config;
   tpp_dtype_type key_type;
   uint32_t id, next;
   
@@ -7067,8 +7087,17 @@ static int sqlite3BtreeCreateTableToilet(Btree * p, int * piTable, int flags)
   tpp_dtable_insert(p->pBt->toilet.root, &key, &value, true);
   
   /* create the table itself */
-  key_type = (flags & BTREE_INTKEY) ? DT_UINT32 : DT_BLOB;
-  tpp_dtable_cache_create_empty(p->pBt->toilet.cache, id, key_type);
+  if(flags & BTREE_INTKEY)
+  {
+    key_type = DT_UINT32;
+    config = p->pBt->toilet.tbl_config;
+  }
+  else
+  {
+    key_type = DT_BLOB;
+    config = p->pBt->toilet.idx_config;
+  }
+  tpp_dtable_cache_create_empty(p->pBt->toilet.cache, id, config, key_type);
   
   return 0;
 }

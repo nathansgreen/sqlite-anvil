@@ -357,7 +357,8 @@ struct BtToilet {
   int only;                 /* Nonzero for toilet-only */
   struct tx_handle tx;      /* The transaction handle */
   int dir_fd;               /* The containing directory */
-  tpp_params *config;       /* The config for dtables */
+  tpp_params *tbl_config;   /* The config for table dtables */
+  tpp_params *idx_config;   /* The config for index dtables */
   tpp_dtable_cache *cache;  /* The dtable cache */
   tpp_dtable *root;         /* The root dtable */
   tpp_dtable *one;          /* The dtable at page 1 */
