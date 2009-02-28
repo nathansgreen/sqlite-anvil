@@ -377,7 +377,9 @@ struct BtToiletCursor {
   tpp_dtable *dtable;       /* The dtable backing this table */
   tpp_blobcmp *blobcmp;     /* The blob comparator to use */
   tpp_dtable_iter *cursor;  /* The toilet iterator ("cursor") */
+  tpp_dtype saved_key;      /* The saved key used to reseek the iterator */
   uint32_t fetch_key;       /* Storage returned by sqlite3BtreeKeyFetch() */
+  bool saved;
 };
 #endif
 
