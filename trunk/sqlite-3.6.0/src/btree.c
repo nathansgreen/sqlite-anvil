@@ -19,7 +19,7 @@
 #include "btreeInt.h"
 #include "vdbeInt.h"
 
-#define TOILET_VERBOSITY 5
+#define TOILET_VERBOSITY 2
 
 #define _GRAY "\e[0m"
 #define _RED "\e[1m\e[31m"
@@ -1247,6 +1247,9 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
           "base" class simple_dtable
         ]
         "fastbase" class simple_dtable
+        "digest_interval" int 30
+        "combine_interval" int 120
+        "combine_count" int 6
         "digest_on_close" bool true
       ]
     ]));
@@ -3211,9 +3214,7 @@ static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKey
       memcpy(copy->aSortOrder, pKeyInfo->aSortOrder, nField);
     }
     pCur->toilet.blobcmp = tpp_new_blobcmp("sqlite3VdbeRecordCompare", toilet_wrap_vdbe_record_compare_1, copy, NULL, true);
-    if(tpp_dtable_set_blob_cmp(pCur->toilet.dtable, pCur->toilet.blobcmp) >= 0)
-      tpp_blobcmp_retain(pCur->toilet.blobcmp);
-    else
+    if(tpp_dtable_set_blob_cmp(pCur->toilet.dtable, pCur->toilet.blobcmp) < 0)
     {
       tpp_blobcmp_release(&pCur->toilet.blobcmp);
       goto fail_kill;
@@ -3229,9 +3230,25 @@ static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKey
       tpp_blobcmp_release(&pCur->toilet.blobcmp);
     goto fail_kill;
   }
-  
   return 0;
 }
+
+static int restoreToiletCursor(BtCursor *pCur, BtShared *pBt) {
+  if(!pCur)
+    return -1;
+  if(pCur->toilet.cursor)
+    return 0;
+  pCur->toilet.cursor = tpp_dtable_cache_iter(pBt->toilet.cache, pCur->pgnoRoot);
+  if(!pCur->toilet.cursor)
+    return -1;
+  if( pCur->toilet.saved ){
+    bool worked = tpp_dtable_iter_seek(pCur->toilet.cursor, &pCur->toilet.saved_key);
+    assert(worked);
+    tpp_dtype_kill(&pCur->toilet.saved_key);
+  }
+  return 0;
+}
+
 #endif
 int sqlite3BtreeCursor(
   Btree *p,                                   /* The btree */
@@ -3294,12 +3311,38 @@ int sqlite3BtreeCloseCursor(BtCursor *pCur){
     sqlite3BtreeEnter(pBtree);
 #if HAVE_TOILET
     if( pCur->toilet.dtable ){
+      if( !pCur->toilet.cursor ){
+        if(pCur->toilet.saved)
+          tpp_dtype_kill(&pCur->toilet.saved_key);
+      } else if(tpp_dtable_cache_can_maintain(pCur->pBt->toilet.cache, pCur->pgnoRoot)) {
+        BtCursor *p;
+        int r;
+
+        for(p=pBt->pCursor; p; p=p->pNext){
+          if( p->pgnoRoot==pCur->pgnoRoot && p->toilet.cursor ){
+            p->toilet.saved = tpp_dtable_iter_valid(p->toilet.cursor);
+            if( p->toilet.saved ){
+              r = tpp_dtable_iter_key(p->toilet.cursor, &p->toilet.saved_key);
+              if( r < 0 )
+                return r;
+            }
+            tpp_dtable_cache_close_iter(p->pBt->toilet.cache, p->toilet.cursor);
+            p->toilet.cursor = NULL;
+          }
+        }
+
+        r = tpp_dtable_cache_maintain(pCur->pBt->toilet.cache, pCur->pgnoRoot);
+        if( r < 0 )
+          return r;
+      }
+
       if( pCur->toilet.blobcmp ){
         tpp_blobcmp_release(&pCur->toilet.blobcmp);
       }
       if( pCur->toilet.cursor ){
         tpp_dtable_cache_close_iter(pCur->pBt->toilet.cache, pCur->toilet.cursor);
       }
+
       tpp_dtable_cache_close(pCur->pBt->toilet.cache, pCur->toilet.dtable);
     }
 #endif
@@ -3423,6 +3466,8 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
 #if HAVE_TOILET
     }
     if( pCur->toilet.dtable ){
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       if( !tpp_dtable_iter_valid(pCur->toilet.cursor) ){
         if( pCur->pBt->toilet.only ){
           *pSize = 0;
@@ -3488,6 +3533,8 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
 #if HAVE_TOILET
     }
     if( pCur->toilet.dtable ){
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
         tpp_blob value;
         if( pCur->toilet.flags & BTREE_INTKEY ){
@@ -3834,6 +3881,8 @@ int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
       uint32_t size;
       tpp_dtype key;
       const void *data;
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       assert(tpp_dtable_iter_valid(pCur->toilet.cursor));
       tpp_dtable_iter_key(pCur->toilet.cursor, &key);
       if( pCur->toilet.flags & BTREE_INTKEY ){
@@ -3899,6 +3948,8 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
       uint32_t size;
       tpp_blob value;
       const void *data;
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       assert(tpp_dtable_iter_valid(pCur->toilet.cursor));
       tpp_dtable_iter_value(pCur->toilet.cursor, &value);
       size = tpp_blob_size(&value);
@@ -4000,6 +4051,8 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
       data = (const void*)fetchPayload(pCur, pAmt, 0);
     }
     if( pCur->toilet.dtable ){
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
         tpp_dtype key;
         const void *key_data;
@@ -4065,6 +4118,8 @@ const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
       size_t size;
       tpp_blob value;
       const void *blob;
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       tpp_dtable_iter_value(pCur->toilet.cursor, &value);
       size = tpp_blob_size(&value);
       blob = tpp_blob_data(&value);
@@ -4299,6 +4354,8 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
 #if HAVE_TOILET
   }
   if( pCur->toilet.dtable ){
+    if( !pCur->toilet.cursor)
+      restoreToiletCursor(pCur, pCur->pBt);
     tpp_dtable_iter_first(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
     if( pCur->pBt->toilet.only ){
@@ -4348,6 +4405,8 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
 #if HAVE_TOILET
   }
   if( pCur->toilet.dtable ){
+    if( !pCur->toilet.cursor)
+      restoreToiletCursor(pCur, pCur->pBt);
     tpp_dtable_iter_last(pCur->toilet.cursor);
     /* FIXME: check return value, etc. */
     if( pCur->pBt->toilet.only ){
@@ -4388,6 +4447,8 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
       return -1;
     }
     tpp_dtype_int(&key, nKey);
+    if( !pCur->toilet.cursor)
+      restoreToiletCursor(pCur, pCur->pBt);
     r = tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
     if(r)
     {
@@ -4455,6 +4516,8 @@ static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i6
   }
   else
   {
+    if( !pCur->toilet.cursor)
+      restoreToiletCursor(pCur, pCur->pBt);
     r = tpp_dtable_iter_seek_test(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare_2, pUnKey);
     if(r)
     {
@@ -4832,6 +4895,8 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
 #if HAVE_TOILET
   }
   if( pCur->toilet.dtable ){
+    if( !pCur->toilet.cursor)
+      restoreToiletCursor(pCur, pCur->pBt);
     if( !pCur->pBt->toilet.only )
     if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
       uint32_t id;
@@ -4935,6 +5000,8 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
 
 #if HAVE_TOILET
   if( pCur->toilet.dtable ){
+    if( !pCur->toilet.cursor)
+      restoreToiletCursor(pCur, pCur->pBt);
     if( !pCur->pBt->toilet.only )
     if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
       uint32_t id;
@@ -7035,6 +7102,8 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   if( rc==SQLITE_OK ){
 #if HAVE_TOILET
     if( pCur->toilet.dtable ){
+      if( !pCur->toilet.cursor)
+        restoreToiletCursor(pCur, pCur->pBt);
       tpp_dtype key;
       tpp_dtable_iter_key(pCur->toilet.cursor, &key);
       rc = tpp_dtable_remove(pCur->toilet.dtable, &key);
