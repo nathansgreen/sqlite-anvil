@@ -4,7 +4,7 @@
 #export VALGRIND="valgrind --trace-children=yes --leak-check=full"
 
 # Uncomment to do IO counting
-#export IO_COUNT='LD_PRELOAD=$TOILET/io_count.so IO_COUNT_REQUIRE=libtoilet'
+#export IO_COUNT='LD_PRELOAD=$ANVIL/io_count.so IO_COUNT_REQUIRE=libanvil'
 
 # Uncomment to enable patchgroup traces on the tests
 #TRACE_TEST="PATCHGROUP_TRACE=test.pgt"
@@ -42,10 +42,10 @@ then
 	# We use sqlite3 rather than lt-sqlite3 since the latter may not exist yet
 	if [ -f .libs/sqlite3 ]
 	then
-		TOILET="`ldd .libs/sqlite3 | grep /libtoilet.so | sed -e 's/^.*=> \(.*\)\/libtoilet.so .*$/\1/'`"
-		if [ ! "$TOILET" ]
+		ANVIL="`ldd .libs/sqlite3 | grep /libanvil.so | sed -e 's/^.*=> \(.*\)\/libanvil.so .*$/\1/'`"
+		if [ ! "$ANVIL" ]
 		then
-			echo "Cannot find toilet; disabling IO counting." >&2
+			echo "Cannot find Anvil; disabling IO counting." >&2
 			IO_COUNT=
 		fi
 	else
@@ -104,8 +104,8 @@ if [ -d dbt2/ ]
 then
 	DBT2_TMP=/tmp/dbt2-sqlite.$$
 	BUILD_DB=dbt2/scripts/sqlite/build_db.sh
-	# Use -t to disable toilet mode, -T for toilet only mode, -r to randomize data; these require a patched dbt2
-	#MODE="-T"
+	# Use -a to disable Anvil mode, -A for Anvil only mode, -r to randomize data; these require a patched dbt2
+	#MODE="-A"
 	echo "Running DBT2..."
 	mkdir $DBT2_TMP
 	if [ "$OPROFILE" ]

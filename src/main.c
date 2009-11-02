@@ -26,8 +26,8 @@
 # include "rtree.h"
 #endif
 
-#if HAVE_TOILET
-#include <toilet++.h>
+#if HAVE_ANVIL
+#include <anvil.h>
 #endif
 
 /*
@@ -117,12 +117,12 @@ int sqlite3_initialize(void){
     sqlite3StatusReset();
     inProgress = 1;
     rc = sqlite3_os_init();
-#if HAVE_TOILET
-    if( rc==SQLITE_OK && !sqlite3Config.isToiletInit ){
-      rc = tpp_init(".");
+#if HAVE_ANVIL
+    if( rc==SQLITE_OK && !sqlite3Config.isAnvilInit ){
+      rc = anvil_init(".");
       if( rc>= 0 ){
         rc = SQLITE_OK;
-        sqlite3Config.isToiletInit = 1;
+        sqlite3Config.isAnvilInit = 1;
       }
     }
 #endif
@@ -976,16 +976,16 @@ int sqlite3BtreeFactory(
   if( db->flags & SQLITE_NoReadlock ){
     btFlags |= BTREE_NO_READLOCK;
   }
-#if HAVE_TOILET
-  if( db->openFlags & SQLITE_OPEN_TOILET ){
-    btFlags |= BTREE_TOILET;
+#if HAVE_ANVIL
+  if( db->openFlags & SQLITE_OPEN_ANVIL ){
+    btFlags |= BTREE_ANVIL;
     /* lower layers can't deal with this flag */
-    vfsFlags &= ~SQLITE_OPEN_TOILET;
+    vfsFlags &= ~SQLITE_OPEN_ANVIL;
   }
-  if( db->openFlags & SQLITE_OPEN_ONLY_TOILET ){
-    btFlags |= BTREE_ONLY_TOILET;
+  if( db->openFlags & SQLITE_OPEN_ONLY_ANVIL ){
+    btFlags |= BTREE_ONLY_ANVIL;
     /* lower layers can't deal with this flag */
-    vfsFlags &= ~SQLITE_OPEN_ONLY_TOILET;
+    vfsFlags &= ~SQLITE_OPEN_ONLY_ANVIL;
   }
 #endif
   if( zFilename==0 ){
@@ -1477,8 +1477,8 @@ int sqlite3_open(
   sqlite3 **ppDb 
 ){
   return openDatabase(zFilename, ppDb,
-#if HAVE_TOILET
-                      SQLITE_OPEN_TOILET |
+#if HAVE_ANVIL
+                      SQLITE_OPEN_ANVIL |
 #endif
                       SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0);
 }
