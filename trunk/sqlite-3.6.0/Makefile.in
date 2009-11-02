@@ -55,9 +55,9 @@ READLINE_FLAGS = -DHAVE_READLINE=@TARGET_HAVE_READLINE@ @TARGET_READLINE_INC@
 #
 LIBREADLINE = @TARGET_READLINE_LIBS@
 
-# Compiler options needed for programs that use the "toilet" system.
+# Compiler options needed for programs that use the "Anvil" system.
 #
-TCC += -DHAVE_TOILET=@TARGET_HAVE_TOILET@ @TARGET_TOILET_INC@
+TCC += -DHAVE_ANVIL=@TARGET_HAVE_ANVIL@ @TARGET_ANVIL_INC@
 
 # Should the database engine be compiled threadsafe
 #
@@ -69,7 +69,7 @@ TCC += -DSQLITE_THREAD_OVERRIDE_LOCK=@THREADSOVERRIDELOCKS@
 
 # Any target libraries which libsqlite must be linked against
 # 
-TLIBS = @LIBS@ @TARGET_TOILET_LIBS@
+TLIBS = @LIBS@ @TARGET_ANVIL_LIBS@
 
 # Flags controlling use of the in memory btree implementation
 #

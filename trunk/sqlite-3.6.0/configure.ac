@@ -580,32 +580,32 @@ AC_SUBST(TARGET_HAVE_READLINE)
 
 ##########
 # Figure out what C libraries are required to compile programs
-# that use "toilet" system.
+# that use "Anvil" system.
 #
-TARGET_TOILET_LIBS=""
-TARGET_TOILET_INC=""
-TARGET_HAVE_TOILET=0
-AC_ARG_WITH(toilet, AC_HELP_STRING([--with-toilet=DIR],[directory containing toilet]), with_toilet="$withval", with_toilet="")
+TARGET_ANVIL_LIBS=""
+TARGET_ANVIL_INC=""
+TARGET_HAVE_ANVIL=0
+AC_ARG_WITH(anvil, AC_HELP_STRING([--with-anvil=DIR],[directory containing Anvil]), with_anvil="$withval", with_anvil="")
 
-if test x"$with_toilet" != x; then
+if test x"$with_anvil" != x; then
 	found="no"
-	AC_CHECK_FILE($with_toilet/toilet++.h, found=yes)
+	AC_CHECK_FILE($with_anvil/anvil.h, found=yes)
 	if test x$found = xyes; then
 		found="no"
-		TARGET_HAVE_TOILET=1
-		TARGET_TOILET_LIBS="-L$with_toilet -ltoilet -Wl,--rpath -Wl,$with_toilet"
-		AC_CHECK_FILE($with_toilet/fstitch/include/patchgroup.h, found=yes)
+		TARGET_HAVE_ANVIL=1
+		TARGET_ANVIL_LIBS="-L$with_anvil -lanvil -Wl,--rpath -Wl,$with_anvil"
+		AC_CHECK_FILE($with_anvil/fstitch/include/patchgroup.h, found=yes)
 		if test x$found = xyes; then
-			TARGET_TOILET_INC="-I$with_toilet -I$with_toilet/fstitch/include"
+			TARGET_ANVIL_INC="-I$with_anvil -I$with_anvil/fstitch/include"
 		else
-			TARGET_TOILET_INC="-I$with_toilet"
+			TARGET_ANVIL_INC="-I$with_anvil"
 		fi
 	fi
 fi
 
-AC_SUBST(TARGET_TOILET_LIBS)
-AC_SUBST(TARGET_TOILET_INC)
-AC_SUBST(TARGET_HAVE_TOILET)
+AC_SUBST(TARGET_ANVIL_LIBS)
+AC_SUBST(TARGET_ANVIL_INC)
+AC_SUBST(TARGET_HAVE_ANVIL)
 
 ##########
 # Figure out what C libraries are required to compile programs

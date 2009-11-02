@@ -19,7 +19,7 @@
 #include "btreeInt.h"
 #include "vdbeInt.h"
 
-#define TOILET_VERBOSITY 2
+#define ANVIL_VERBOSITY 2
 
 #define _GRAY "\e[0m"
 #define _RED "\e[1m\e[31m"
@@ -28,35 +28,35 @@
 #define _CYAN "\e[1m\e[36m"
 #define _GREEN "\e[1m\e[32m"
 
-#if TOILET_VERBOSITY >= 1
+#if ANVIL_VERBOSITY >= 1
 /* errors - red, verbosity 1 */
 #define Rprintf(format, args...) fprintf(stderr, _RED format _GRAY, ##args)
 #else
 #define Rprintf(format, args...)
 #endif
 
-#if TOILET_VERBOSITY >= 2
+#if ANVIL_VERBOSITY >= 2
 /* warnings - yellow, verbosity 2 */
 #define Yprintf(format, args...) fprintf(stderr, _YELLOW format _GRAY, ##args)
 #else
 #define Yprintf(format, args...)
 #endif
 
-#if TOILET_VERBOSITY >= 3
+#if ANVIL_VERBOSITY >= 3
 /* important notices - blue, verbosity 3 */
 #define Bprintf(format, args...) fprintf(stderr, _BLUE format _GRAY, ##args)
 #else
 #define Bprintf(format, args...)
 #endif
 
-#if TOILET_VERBOSITY >= 4
+#if ANVIL_VERBOSITY >= 4
 /* notices - cyan, verbosity 4 */
 #define Cprintf(format, args...) fprintf(stderr, _CYAN format _GRAY, ##args)
 #else
 #define Cprintf(format, args...)
 #endif
 
-#if TOILET_VERBOSITY >= 5
+#if ANVIL_VERBOSITY >= 5
 /* success - green, verbosity 5 */
 #define Gprintf(format, args...) fprintf(stderr, _GREEN format _GRAY, ##args)
 #define Dprintf(format, args...) fprintf(stderr, _GREEN "%s" _GRAY "(" format ")\n", __FUNCTION__, ##args)
@@ -1198,46 +1198,46 @@ static int sqlite3BtreeInvokeBusyHandler(void *pArg, int n){
   return sqlite3InvokeBusyHandler(&pBt->db->busyHandler);
 }
 
-#if HAVE_TOILET
-static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int flags, int vfsFlags)
+#if HAVE_ANVIL
+static int sqlite3BtreeOpenAnvil(BtShared *pBt, const char * zFilename, int flags, int vfsFlags)
 {
   /* all right, screw this idiotic indenting style, I'm using mine */
   int r, i, fresh = 0;
-  char * toilet_name = NULL;
-  if(!pBt->toilet.only)
+  char * anvil_name = NULL;
+  if(!pBt->anvil.only)
   {
     /* XXX HACK */
-    toilet_name = malloc(strlen(zFilename) + 8);
-    strcpy(toilet_name, zFilename);
-    strcat(toilet_name, ".toilet");
-    zFilename = toilet_name;
+    anvil_name = malloc(strlen(zFilename) + 8);
+    strcpy(anvil_name, zFilename);
+    strcat(anvil_name, ".anvil");
+    zFilename = anvil_name;
   }
-  TX_HANDLE_INIT(pBt->toilet.tx);
-  pBt->toilet.dir_fd = open(zFilename, 0);
-  if(pBt->toilet.dir_fd < 0)
+  TX_HANDLE_INIT(pBt->anvil.tx);
+  pBt->anvil.dir_fd = open(zFilename, 0);
+  if(pBt->anvil.dir_fd < 0)
   {
     if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
       goto fail_free;
     r = mkdir(zFilename, 0775);
     if(r < 0)
       goto fail_free;
-    pBt->toilet.dir_fd = open(zFilename, 0);
-    if(pBt->toilet.dir_fd < 0)
+    pBt->anvil.dir_fd = open(zFilename, 0);
+    if(pBt->anvil.dir_fd < 0)
     {
     fail_free:
-      free(toilet_name);
+      free(anvil_name);
       return -1;
     }
   }
-  free(toilet_name);
+  free(anvil_name);
   
-  pBt->toilet.tbl_config = tpp_params_new();
-  if(!pBt->toilet.tbl_config)
+  pBt->anvil.tbl_config = anvil_params_new();
+  if(!pBt->anvil.tbl_config)
     goto fail_close;
-  pBt->toilet.idx_config = tpp_params_new();
-  if(!pBt->toilet.idx_config)
+  pBt->anvil.idx_config = anvil_params_new();
+  if(!pBt->anvil.idx_config)
     goto fail_tbl_params;
-  r = tpp_params_parse(pBt->toilet.tbl_config, TOILET_CONFIG_LITERAL(
+  r = anvil_params_parse(pBt->anvil.tbl_config, ANVIL_CONFIG_LITERAL(
     config [
       "cache_size" int 40000
       "base" class(dt) managed_dtable
@@ -1255,7 +1255,7 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
     ]));
   if(r < 0)
     goto fail_idx_params;
-  r = tpp_params_parse(pBt->toilet.idx_config, TOILET_CONFIG_LITERAL(
+  r = anvil_params_parse(pBt->anvil.idx_config, ANVIL_CONFIG_LITERAL(
     config [
       "cache_size" int 40000
       "base" class(dt) managed_dtable
@@ -1266,79 +1266,79 @@ static int sqlite3BtreeOpenToilet(BtShared *pBt, const char * zFilename, int fla
     ]));
   if(r < 0)
     goto fail_idx_params;
-  r = TX_START(pBt->toilet.tx);
+  r = TX_START(pBt->anvil.tx);
   if(r < 0)
     goto fail_idx_params;
-  pBt->toilet.cache = tpp_dtable_cache_new(pBt->toilet.dir_fd, "cache_dtable");
-  if(!pBt->toilet.cache)
+  pBt->anvil.cache = anvil_dtable_cache_new(pBt->anvil.dir_fd, "cache_dtable");
+  if(!pBt->anvil.cache)
     goto fail_idx_params;
   
-  pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0, pBt->toilet.tbl_config);
-  if(!pBt->toilet.root)
+  pBt->anvil.root = anvil_dtable_cache_open(pBt->anvil.cache, 0, pBt->anvil.tbl_config);
+  if(!pBt->anvil.root)
   {
-    tpp_dtype key;
+    anvil_dtype key;
     uint32_t value[17];
-    tpp_blob value_blob;
+    anvil_blob value_blob;
     if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
       goto fail_cache;
-    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 0, pBt->toilet.tbl_config, DT_UINT32);
+    r = anvil_dtable_cache_create_empty(pBt->anvil.cache, 0, pBt->anvil.tbl_config, DT_UINT32);
     if(r < 0)
       goto fail_cache;
-    pBt->toilet.root = tpp_dtable_cache_open(pBt->toilet.cache, 0, pBt->toilet.tbl_config);
-    if(!pBt->toilet.root)
+    pBt->anvil.root = anvil_dtable_cache_open(pBt->anvil.cache, 0, pBt->anvil.tbl_config);
+    if(!pBt->anvil.root)
       goto fail_cache;
     
     /* load default values */
-    tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
-    value[0] = TOILET_FIRST_TABLE_NO;
+    anvil_dtype_int(&key, ANVIL_ROOT_INFO_ROW);
+    value[0] = ANVIL_FIRST_TABLE_NO;
     for(i = 1; i <= 16; i++)
       value[i] = 0;
-    r = tpp_blob_new(&value_blob, sizeof(value), &value);
+    r = anvil_blob_new(&value_blob, sizeof(value), &value);
     if(r < 0)
       goto fail_root;
-    r = tpp_dtable_insert(pBt->toilet.root, &key, &value_blob, true);
-    tpp_blob_kill(&value_blob);
+    r = anvil_dtable_insert(pBt->anvil.root, &key, &value_blob, true);
+    anvil_blob_kill(&value_blob);
     if(r < 0)
       goto fail_root;
     
-    tpp_dtype_int(&key, 1);
+    anvil_dtype_int(&key, 1);
     value[0] = BTREE_INTKEY | BTREE_LEAFDATA;
-    r = tpp_blob_new(&value_blob, sizeof(value[0]), &value[0]);
+    r = anvil_blob_new(&value_blob, sizeof(value[0]), &value[0]);
     if(r < 0)
       goto fail_root;
-    r = tpp_dtable_insert(pBt->toilet.root, &key, &value_blob, true);
-    tpp_blob_kill(&value_blob);
+    r = anvil_dtable_insert(pBt->anvil.root, &key, &value_blob, true);
+    anvil_blob_kill(&value_blob);
     if(r < 0)
       goto fail_root;
   }
   
-  pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1, pBt->toilet.tbl_config);
-  if(!pBt->toilet.one)
+  pBt->anvil.one = anvil_dtable_cache_open(pBt->anvil.cache, 1, pBt->anvil.tbl_config);
+  if(!pBt->anvil.one)
   {
     if(!(flags & BTREE_CREATE) && !(vfsFlags & SQLITE_OPEN_CREATE))
       goto fail_root;
-    r = tpp_dtable_cache_create_empty(pBt->toilet.cache, 1, pBt->toilet.tbl_config, DT_UINT32);
+    r = anvil_dtable_cache_create_empty(pBt->anvil.cache, 1, pBt->anvil.tbl_config, DT_UINT32);
     if(r < 0)
       goto fail_root;
-    pBt->toilet.one = tpp_dtable_cache_open(pBt->toilet.cache, 1, pBt->toilet.tbl_config);
-    if(!pBt->toilet.one)
+    pBt->anvil.one = anvil_dtable_cache_open(pBt->anvil.cache, 1, pBt->anvil.tbl_config);
+    if(!pBt->anvil.one)
       goto fail_root;
   }
-  TX_END(pBt->toilet.tx);
+  TX_END(pBt->anvil.tx);
   return 0;
 
 fail_root:
-  tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
+  anvil_dtable_cache_close(pBt->anvil.cache, pBt->anvil.root);
 fail_cache:
-  tpp_dtable_cache_kill(pBt->toilet.cache);
+  anvil_dtable_cache_kill(pBt->anvil.cache);
 fail_idx_params:
-  tpp_params_kill(pBt->toilet.idx_config);
+  anvil_params_kill(pBt->anvil.idx_config);
 fail_tbl_params:
-  tpp_params_kill(pBt->toilet.tbl_config);
+  anvil_params_kill(pBt->anvil.tbl_config);
 fail_close:
-  close(pBt->toilet.dir_fd);
-  pBt->toilet.dir_fd = -1;
-  TX_CLEANUP(pBt->toilet.tx);
+  close(pBt->anvil.dir_fd);
+  pBt->anvil.dir_fd = -1;
+  TX_CLEANUP(pBt->anvil.tx);
   return -1;
 }
 #endif
@@ -1454,19 +1454,19 @@ int sqlite3BtreeOpen(
       rc = SQLITE_NOMEM;
       goto btree_open_out;
     }
-#if HAVE_TOILET
-    if( flags & BTREE_TOILET ){
+#if HAVE_ANVIL
+    if( flags & BTREE_ANVIL ){
       if( !zFilename || isMemdb ){
         /* FIXME: we could/should handle doing temporary databases, maybe */
-        Yprintf("Not using requested toilet mode for %s database.\n", zFilename ? "memory" : "temporary");
+        Yprintf("Not using requested Anvil mode for %s database.\n", zFilename ? "memory" : "temporary");
         goto nevermind;
       }
-      Bprintf("Using toilet for data storage.\n");
-      if( flags & BTREE_ONLY_TOILET ){
-        pBt->toilet.only = 1;
-        Bprintf("Toilet-only mode requested!\n");
+      Bprintf("Using Anvil for data storage.\n");
+      if( flags & BTREE_ONLY_ANVIL ){
+        pBt->anvil.only = 1;
+        Bprintf("Anvil-only mode requested!\n");
       }
-      int r = sqlite3BtreeOpenToilet(pBt, zFilename, flags, vfsFlags);
+      int r = sqlite3BtreeOpenAnvil(pBt, zFilename, flags, vfsFlags);
       if( r < 0 ){
         rc = SQLITE_INTERNAL;
         goto btree_open_out;
@@ -1474,9 +1474,9 @@ int sqlite3BtreeOpen(
     }else{
       /* this is how we know it's not open */
     nevermind:
-      pBt->toilet.dir_fd = -1;
+      pBt->anvil.dir_fd = -1;
     }
-    if( !pBt->toilet.only ){ /* don't indent for this */
+    if( !pBt->anvil.only ){ /* don't indent for this */
 #endif
     pBt->busyHdr.xFunc = sqlite3BtreeInvokeBusyHandler;
     pBt->busyHdr.pArg = pBt;
@@ -1525,8 +1525,8 @@ int sqlite3BtreeOpen(
     pBt->usableSize = pBt->pageSize - nReserve;
     assert( (pBt->pageSize & 7)==0 );  /* 8-byte alignment of pageSize */
     sqlite3PagerSetPagesize(pBt->pPager, &pBt->pageSize);
-#if HAVE_TOILET
-    }else{ /* !pBt->toilet.only */
+#if HAVE_ANVIL
+    }else{ /* !pBt->anvil.only */
       p->pBt = pBt;
     }
 #endif
@@ -1589,15 +1589,15 @@ int sqlite3BtreeOpen(
 
 btree_open_out:
   if( rc!=SQLITE_OK ){
-#if HAVE_TOILET
-    if( pBt && pBt->toilet.dir_fd >= 0 ){
-      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
-      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
-      tpp_dtable_cache_kill(pBt->toilet.cache);
-      tpp_params_kill(pBt->toilet.idx_config);
-      tpp_params_kill(pBt->toilet.tbl_config);
-      close(pBt->toilet.dir_fd);
-      TX_CLEANUP(pBt->toilet.tx);
+#if HAVE_ANVIL
+    if( pBt && pBt->anvil.dir_fd >= 0 ){
+      anvil_dtable_cache_close(pBt->anvil.cache, pBt->anvil.one);
+      anvil_dtable_cache_close(pBt->anvil.cache, pBt->anvil.root);
+      anvil_dtable_cache_kill(pBt->anvil.cache);
+      anvil_params_kill(pBt->anvil.idx_config);
+      anvil_params_kill(pBt->anvil.tbl_config);
+      close(pBt->anvil.dir_fd);
+      TX_CLEANUP(pBt->anvil.tx);
     }
 #endif
     if( pBt && pBt->pPager ){
@@ -1708,22 +1708,22 @@ int sqlite3BtreeClose(Btree *p){
     ** Clean out and delete the BtShared object.
     */
     assert( !pBt->pCursor );
-#if HAVE_TOILET
-    if( pBt->toilet.dir_fd >= 0 ){
-      int r = TX_START(pBt->toilet.tx);
+#if HAVE_ANVIL
+    if( pBt->anvil.dir_fd >= 0 ){
+      int r = TX_START(pBt->anvil.tx);
       if( r < 0 ){
         return SQLITE_INTERNAL;
       }
-      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.one);
-      tpp_dtable_cache_close(pBt->toilet.cache, pBt->toilet.root);
-      tpp_dtable_cache_kill(pBt->toilet.cache);
-      tpp_params_kill(pBt->toilet.idx_config);
-      tpp_params_kill(pBt->toilet.tbl_config);
-      close(pBt->toilet.dir_fd);
-      TX_END(pBt->toilet.tx); /* technically TX_CLEANUP will do this */
-      TX_CLEANUP(pBt->toilet.tx);
+      anvil_dtable_cache_close(pBt->anvil.cache, pBt->anvil.one);
+      anvil_dtable_cache_close(pBt->anvil.cache, pBt->anvil.root);
+      anvil_dtable_cache_kill(pBt->anvil.cache);
+      anvil_params_kill(pBt->anvil.idx_config);
+      anvil_params_kill(pBt->anvil.tbl_config);
+      close(pBt->anvil.dir_fd);
+      TX_END(pBt->anvil.tx); /* technically TX_CLEANUP will do this */
+      TX_CLEANUP(pBt->anvil.tx);
     }
-    if( !pBt->toilet.only )
+    if( !pBt->anvil.only )
 #endif
     sqlite3PagerClose(pBt->pPager);
     if( pBt->xFreeSchema && pBt->pSchema ){
@@ -1764,13 +1764,13 @@ int sqlite3BtreeSetCacheSize(Btree *p, int mxPage){
   BtShared *pBt = p->pBt;
   Dprintf("\"%s\", %d", sqlite3BtreeGetFilename(p), mxPage);
   assert( sqlite3_mutex_held(p->db->mutex) );
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   sqlite3BtreeEnter(p);
   sqlite3PagerSetCachesize(pBt->pPager, mxPage);
   sqlite3BtreeLeave(p);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   return SQLITE_OK;
@@ -1789,13 +1789,13 @@ int sqlite3BtreeSetSafetyLevel(Btree *p, int level, int fullSync){
   BtShared *pBt = p->pBt;
   Dprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), level, fullSync);
   assert( sqlite3_mutex_held(p->db->mutex) );
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   sqlite3BtreeEnter(p);
   sqlite3PagerSetSafetyLevel(pBt->pPager, level, fullSync);
   sqlite3BtreeLeave(p);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   return SQLITE_OK;
@@ -1811,14 +1811,14 @@ int sqlite3BtreeSyncDisabled(Btree *p){
   int rc = SQLITE_OK;
   Dprintf("\"%s\"", sqlite3BtreeGetFilename(p));
   assert( sqlite3_mutex_held(p->db->mutex) );  
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   sqlite3BtreeEnter(p);
   assert( pBt && pBt->pPager );
   rc = sqlite3PagerNosync(pBt->pPager);
   sqlite3BtreeLeave(p);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   return rc;
@@ -1844,8 +1844,8 @@ int sqlite3BtreeSetPageSize(Btree *p, int pageSize, int nReserve){
   int rc = SQLITE_OK;
   BtShared *pBt = p->pBt;
   Dprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), pageSize, nReserve);
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   sqlite3BtreeEnter(p);
   if( pBt->pageSizeFixed ){
@@ -1865,7 +1865,7 @@ int sqlite3BtreeSetPageSize(Btree *p, int pageSize, int nReserve){
   }
   pBt->usableSize = pBt->pageSize - nReserve;
   sqlite3BtreeLeave(p);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   return rc;
@@ -1963,8 +1963,8 @@ static int lockBtree(BtShared *pBt){
 
   assert( sqlite3_mutex_held(pBt->mutex) );
   if( pBt->pPage1 ) return SQLITE_OK;
-#if HAVE_TOILET
-  if( pBt->toilet.only ) return SQLITE_OK;
+#if HAVE_ANVIL
+  if( pBt->anvil.only ) return SQLITE_OK;
 #endif
   rc = sqlite3BtreeGetPage(pBt, 1, &pPage1, 0);
   if( rc!=SQLITE_OK ) return rc;
@@ -2231,8 +2231,8 @@ int sqlite3BtreeBeginTrans(Btree *p, int wrflag){
   }
 #endif
 
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   do {
     if( pBt->pPage1==0 ){
@@ -2259,14 +2259,14 @@ int sqlite3BtreeBeginTrans(Btree *p, int wrflag){
     }
   }while( rc==SQLITE_BUSY && pBt->inTransaction==TRANS_NONE &&
           sqlite3BtreeInvokeBusyHandler(pBt, 0) );
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
 
   if( rc==SQLITE_OK ){
-#if HAVE_TOILET
-    if( pBt->toilet.dir_fd >= 0 ){
-      rc = TX_START(pBt->toilet.tx);
+#if HAVE_ANVIL
+    if( pBt->anvil.dir_fd >= 0 ){
+      rc = TX_START(pBt->anvil.tx);
       if( rc < 0 ){
         rc = SQLITE_INTERNAL;
         goto trans_begun;
@@ -2725,8 +2725,8 @@ static int autoVacuumCommit(BtShared *pBt, Pgno *pnTrunc){
 int sqlite3BtreeCommitPhaseOne(Btree *p, const char *zMaster){
   int rc = SQLITE_OK;
   Dprintf("\"%s\", \"%s\"", sqlite3BtreeGetFilename(p), zMaster);
-#if HAVE_TOILET
-  if( !p->pBt->toilet.only )
+#if HAVE_ANVIL
+  if( !p->pBt->anvil.only )
 #endif
   if( p->inTrans==TRANS_WRITE ){
     BtShared *pBt = p->pBt;
@@ -2745,9 +2745,9 @@ int sqlite3BtreeCommitPhaseOne(Btree *p, const char *zMaster){
     rc = sqlite3PagerCommitPhaseOne(pBt->pPager, zMaster, nTrunc, 0);
     sqlite3BtreeLeave(p);
   }
-#if HAVE_TOILET
-  if( p->pBt->toilet.dir_fd >= 0 && IN_TX(p->pBt->toilet.tx) ){
-    rc = TX_END(p->pBt->toilet.tx);
+#if HAVE_ANVIL
+  if( p->pBt->anvil.dir_fd >= 0 && IN_TX(p->pBt->anvil.tx) ){
+    rc = TX_END(p->pBt->anvil.tx);
     if( rc < 0 ){
       sqlite3BtreeLeave(p);
       return SQLITE_INTERNAL;
@@ -2776,8 +2776,8 @@ int sqlite3BtreeCommitPhaseTwo(Btree *p){
   BtShared *pBt = p->pBt;
   Dprintf("\"%s\"", sqlite3BtreeGetFilename(p));
 
-#if HAVE_TOILET
-  if( p->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( p->pBt->anvil.only ){
     p->inTrans = TRANS_NONE;
     pBt->inTransaction = TRANS_NONE;
     pBt->nTransaction = 0;
@@ -2926,17 +2926,17 @@ int sqlite3BtreeRollback(Btree *p){
   btreeIntegrity(p);
   unlockAllTables(p);
 
-#if HAVE_TOILET
-  if( pBt->toilet.dir_fd >= 0 && IN_TX(pBt->toilet.tx) ){
-    Yprintf("%s(): not rolling back toilet (commit instead)\n", __FUNCTION__);
-    rc = TX_END(pBt->toilet.tx);
+#if HAVE_ANVIL
+  if( pBt->anvil.dir_fd >= 0 && IN_TX(pBt->anvil.tx) ){
+    Yprintf("%s(): not rolling back Anvil (commit instead)\n", __FUNCTION__);
+    rc = TX_END(pBt->anvil.tx);
     if( rc < 0 ){
       sqlite3BtreeLeave(p);
       return SQLITE_INTERNAL;
     }
     rc = SQLITE_OK;
   }
-  if( !pBt->toilet.only )
+  if( !pBt->anvil.only )
     /* make sure not to put other stuff after here
      * and before the TRANS_WRITE if block below */
 #endif
@@ -3006,8 +3006,8 @@ int sqlite3BtreeBeginStmt(Btree *p){
     rc = pBt->readOnly ? SQLITE_READONLY : SQLITE_ERROR;
   }else{
     assert( pBt->inTransaction==TRANS_WRITE );
-#if HAVE_TOILET
-    if( pBt->toilet.only )
+#if HAVE_ANVIL
+    if( pBt->anvil.only )
       rc = SQLITE_OK;
     else
 #endif
@@ -3030,8 +3030,8 @@ int sqlite3BtreeCommitStmt(Btree *p){
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
-#if HAVE_TOILET
-    if( pBt->toilet.only ){
+#if HAVE_ANVIL
+    if( pBt->anvil.only ){
       rc = SQLITE_OK;
     }else
 #endif
@@ -3059,9 +3059,9 @@ int sqlite3BtreeRollbackStmt(Btree *p){
   sqlite3BtreeEnter(p);
   pBt->db = p->db;
   if( pBt->inStmt && !pBt->readOnly ){
-#if HAVE_TOILET
-    Yprintf("%s(): not rolling back toilet (will commit instead)\n", __FUNCTION__);
-    if( !pBt->toilet.only )
+#if HAVE_ANVIL
+    Yprintf("%s(): not rolling back Anvil (will commit instead)\n", __FUNCTION__);
+    if( !pBt->anvil.only )
 #endif
     rc = sqlite3PagerStmtRollback(pBt->pPager);
     pBt->inStmt = 0;
@@ -3158,8 +3158,8 @@ create_cursor_exception:
   unlockBtreeIfUnused(pBt);
   return rc;
 }
-#if HAVE_TOILET
-static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user)
+#if HAVE_ANVIL
+static int anvil_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const void * b2, size_t s2, void * user)
 {
   int c;
   char aSpace[248];
@@ -3170,26 +3170,26 @@ static int toilet_wrap_vdbe_record_compare_1(const void * b1, size_t s1, const v
   sqlite3VdbeDeleteUnpackedRecord(key2);
   return c;
 }
-static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKeyInfo, BtCursor * pCur)
+static int sqlite3BtreeCursorAnvil(Btree * p, int iTable, struct KeyInfo * pKeyInfo, BtCursor * pCur)
 {
   int r = -1;
-  tpp_dtype key;
-  tpp_blob value;
-  tpp_params * config;
+  anvil_dtype key;
+  anvil_blob value;
+  anvil_params * config;
   
-  tpp_dtype_int(&key, iTable);
-  tpp_dtable_find(p->pBt->toilet.root, &key, &value);
-  pCur->toilet.flags = *(int *) tpp_blob_data(&value);
+  anvil_dtype_int(&key, iTable);
+  anvil_dtable_find(p->pBt->anvil.root, &key, &value);
+  pCur->anvil.flags = *(int *) anvil_blob_data(&value);
   
-  config = (pCur->toilet.flags & BTREE_INTKEY) ? p->pBt->toilet.tbl_config : p->pBt->toilet.idx_config;
-  pCur->toilet.dtable = tpp_dtable_cache_open(p->pBt->toilet.cache, iTable, config);
-  if(!pCur->toilet.dtable)
+  config = (pCur->anvil.flags & BTREE_INTKEY) ? p->pBt->anvil.tbl_config : p->pBt->anvil.idx_config;
+  pCur->anvil.dtable = anvil_dtable_cache_open(p->pBt->anvil.cache, iTable, config);
+  if(!pCur->anvil.dtable)
     return -1;
-  if(!(pCur->toilet.flags & BTREE_INTKEY))
+  if(!(pCur->anvil.flags & BTREE_INTKEY))
   {
-    /* whether or not toilet thinks it will need a
+    /* whether or not Anvil thinks it will need a
      * blob comparator, we know we will need one */
-    Cprintf("Need blobcmp: %s\n", tpp_dtable_get_cmp_name(pCur->toilet.dtable));
+    Cprintf("Need blobcmp: %s\n", anvil_dtable_get_cmp_name(pCur->anvil.dtable));
     /* copy the KeyInfo structure */
     size_t nField = pKeyInfo->nField;
     size_t nByte = sizeof(*pKeyInfo) + (nField - 1) * sizeof(pKeyInfo->aColl[0]);
@@ -3197,8 +3197,8 @@ static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKey
     if(!copy)
     {
     fail_kill:
-      tpp_dtable_cache_close(p->pBt->toilet.cache, pCur->toilet.dtable);
-      pCur->toilet.dtable = NULL;
+      anvil_dtable_cache_close(p->pBt->anvil.cache, pCur->anvil.dtable);
+      pCur->anvil.dtable = NULL;
       return -1;
     }
     memcpy(copy, pKeyInfo, nByte);
@@ -3213,38 +3213,38 @@ static int sqlite3BtreeCursorToilet(Btree * p, int iTable, struct KeyInfo * pKey
       copy->aSortOrder = (uint8_t *) &copy->aColl[nField];
       memcpy(copy->aSortOrder, pKeyInfo->aSortOrder, nField);
     }
-    pCur->toilet.blobcmp = tpp_new_blobcmp("sqlite3VdbeRecordCompare", toilet_wrap_vdbe_record_compare_1, copy, NULL, true);
-    if(tpp_dtable_set_blob_cmp(pCur->toilet.dtable, pCur->toilet.blobcmp) < 0)
+    pCur->anvil.blobcmp = anvil_new_blobcmp("sqlite3VdbeRecordCompare", anvil_wrap_vdbe_record_compare_1, copy, NULL, true);
+    if(anvil_dtable_set_blob_cmp(pCur->anvil.dtable, pCur->anvil.blobcmp) < 0)
     {
-      tpp_blobcmp_release(&pCur->toilet.blobcmp);
+      anvil_blobcmp_release(&pCur->anvil.blobcmp);
       goto fail_kill;
     }
   }
   else
-    pCur->toilet.blobcmp = NULL;
+    pCur->anvil.blobcmp = NULL;
   
-  pCur->toilet.cursor = tpp_dtable_cache_iter(p->pBt->toilet.cache, iTable);
-  if(!pCur->toilet.cursor)
+  pCur->anvil.cursor = anvil_dtable_cache_iter(p->pBt->anvil.cache, iTable);
+  if(!pCur->anvil.cursor)
   {
-    if(pCur->toilet.blobcmp)
-      tpp_blobcmp_release(&pCur->toilet.blobcmp);
+    if(pCur->anvil.blobcmp)
+      anvil_blobcmp_release(&pCur->anvil.blobcmp);
     goto fail_kill;
   }
   return 0;
 }
 
-static int restoreToiletCursor(BtCursor *pCur, BtShared *pBt) {
+static int restoreAnvilCursor(BtCursor *pCur, BtShared *pBt) {
   if(!pCur)
     return -1;
-  if(pCur->toilet.cursor)
+  if(pCur->anvil.cursor)
     return 0;
-  pCur->toilet.cursor = tpp_dtable_cache_iter(pBt->toilet.cache, pCur->pgnoRoot);
-  if(!pCur->toilet.cursor)
+  pCur->anvil.cursor = anvil_dtable_cache_iter(pBt->anvil.cache, pCur->pgnoRoot);
+  if(!pCur->anvil.cursor)
     return -1;
-  if( pCur->toilet.saved ){
-    bool worked = tpp_dtable_iter_seek(pCur->toilet.cursor, &pCur->toilet.saved_key);
+  if( pCur->anvil.saved ){
+    bool worked = anvil_dtable_iter_seek(pCur->anvil.cursor, &pCur->anvil.saved_key);
     assert(worked);
-    tpp_dtype_kill(&pCur->toilet.saved_key);
+    anvil_dtype_kill(&pCur->anvil.saved_key);
   }
   return 0;
 }
@@ -3261,11 +3261,11 @@ int sqlite3BtreeCursor(
   Dprintf("\"%s\", %d, %d", sqlite3BtreeGetFilename(p), iTable, wrFlag);
   sqlite3BtreeEnter(p);
   p->pBt->db = p->db;
-#if HAVE_TOILET
-  if( !p->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !p->pBt->anvil.only ){
 #endif
   rc = btreeCursor(p, iTable, wrFlag, pKeyInfo, pCur);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }else{
     /* the last part of btreeCursor() */
     pCur->pgnoRoot = (Pgno) iTable;
@@ -3280,14 +3280,14 @@ int sqlite3BtreeCursor(
     p->pBt->pCursor = pCur;
     pCur->eState = CURSOR_VALID;
   }
-  if( p->pBt->toilet.dir_fd >= 0 && rc == SQLITE_OK ){
-    int r = sqlite3BtreeCursorToilet(p, iTable, pKeyInfo, pCur);
+  if( p->pBt->anvil.dir_fd >= 0 && rc == SQLITE_OK ){
+    int r = sqlite3BtreeCursorAnvil(p, iTable, pKeyInfo, pCur);
     if( r < 0 ){
       rc = SQLITE_INTERNAL;
     }
   }else{
     /* this is how we know it's not open */
-    pCur->toilet.dtable = NULL;
+    pCur->anvil.dtable = NULL;
   }
 #endif
   sqlite3BtreeLeave(p);
@@ -3309,41 +3309,41 @@ int sqlite3BtreeCloseCursor(BtCursor *pCur){
   if( pBtree ){
     BtShared *pBt = pCur->pBt;
     sqlite3BtreeEnter(pBtree);
-#if HAVE_TOILET
-    if( pCur->toilet.dtable ){
-      if( !pCur->toilet.cursor ){
-        if(pCur->toilet.saved)
-          tpp_dtype_kill(&pCur->toilet.saved_key);
-      } else if(tpp_dtable_cache_can_maintain(pCur->pBt->toilet.cache, pCur->pgnoRoot)) {
+#if HAVE_ANVIL
+    if( pCur->anvil.dtable ){
+      if( !pCur->anvil.cursor ){
+        if(pCur->anvil.saved)
+          anvil_dtype_kill(&pCur->anvil.saved_key);
+      } else if(anvil_dtable_cache_can_maintain(pCur->pBt->anvil.cache, pCur->pgnoRoot)) {
         BtCursor *p;
         int r;
 
         for(p=pBt->pCursor; p; p=p->pNext){
-          if( p->pgnoRoot==pCur->pgnoRoot && p->toilet.cursor ){
-            p->toilet.saved = tpp_dtable_iter_valid(p->toilet.cursor);
-            if( p->toilet.saved ){
-              r = tpp_dtable_iter_key(p->toilet.cursor, &p->toilet.saved_key);
+          if( p->pgnoRoot==pCur->pgnoRoot && p->anvil.cursor ){
+            p->anvil.saved = anvil_dtable_iter_valid(p->anvil.cursor);
+            if( p->anvil.saved ){
+              r = anvil_dtable_iter_key(p->anvil.cursor, &p->anvil.saved_key);
               if( r < 0 )
                 return r;
             }
-            tpp_dtable_cache_close_iter(p->pBt->toilet.cache, p->toilet.cursor);
-            p->toilet.cursor = NULL;
+            anvil_dtable_cache_close_iter(p->pBt->anvil.cache, p->anvil.cursor);
+            p->anvil.cursor = NULL;
           }
         }
 
-        r = tpp_dtable_cache_maintain(pCur->pBt->toilet.cache, pCur->pgnoRoot);
+        r = anvil_dtable_cache_maintain(pCur->pBt->anvil.cache, pCur->pgnoRoot);
         if( r < 0 )
           return r;
       }
 
-      if( pCur->toilet.blobcmp ){
-        tpp_blobcmp_release(&pCur->toilet.blobcmp);
+      if( pCur->anvil.blobcmp ){
+        anvil_blobcmp_release(&pCur->anvil.blobcmp);
       }
-      if( pCur->toilet.cursor ){
-        tpp_dtable_cache_close_iter(pCur->pBt->toilet.cache, pCur->toilet.cursor);
+      if( pCur->anvil.cursor ){
+        anvil_dtable_cache_close_iter(pCur->pBt->anvil.cache, pCur->anvil.cursor);
       }
 
-      tpp_dtable_cache_close(pCur->pBt->toilet.cache, pCur->toilet.dtable);
+      anvil_dtable_cache_close(pCur->pBt->anvil.cache, pCur->anvil.dtable);
     }
 #endif
     pBt->db = pBtree->db;
@@ -3453,8 +3453,8 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
   if( rc==SQLITE_OK ){
-#if HAVE_TOILET
-    if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+    if( !pCur->pBt->anvil.only ){
 #endif
     assert( pCur->eState==CURSOR_INVALID || pCur->eState==CURSOR_VALID );
     if( pCur->eState==CURSOR_INVALID ){
@@ -3463,39 +3463,39 @@ int sqlite3BtreeKeySize(BtCursor *pCur, i64 *pSize){
       getCellInfo(pCur);
       *pSize = pCur->info.nKey;
     }
-#if HAVE_TOILET
+#if HAVE_ANVIL
     }
-    if( pCur->toilet.dtable ){
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      if( !tpp_dtable_iter_valid(pCur->toilet.cursor) ){
-        if( pCur->pBt->toilet.only ){
+    if( pCur->anvil.dtable ){
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      if( !anvil_dtable_iter_valid(pCur->anvil.cursor) ){
+        if( pCur->pBt->anvil.only ){
           *pSize = 0;
         }else if( *pSize ){
-          Rprintf("KEY ERROR %lld != (toilet) [invalid]\n", *pSize);
+          Rprintf("KEY ERROR %lld != (Anvil) [invalid]\n", *pSize);
         }
       }else{
-        tpp_dtype key;
-        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-        if( pCur->toilet.flags & BTREE_INTKEY ){
+        anvil_dtype key;
+        anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+        if( pCur->anvil.flags & BTREE_INTKEY ){
           uint32_t value;
-          tpp_dtype_get_int(&key, &value);
-          if( pCur->pBt->toilet.only ){
+          anvil_dtype_get_int(&key, &value);
+          if( pCur->pBt->anvil.only ){
             *pSize = value;
           }else if( *pSize != value ){
-            Rprintf("KEY ERROR %lld != (toilet) %u\n", *pSize, value);
+            Rprintf("KEY ERROR %lld != (Anvil) %u\n", *pSize, value);
           }
         }else{
           size_t size;
-          tpp_blob blob;
-          tpp_dtype_get_blb(&key, &blob);
-          size = tpp_blob_size(&blob);
-          tpp_blob_kill(&blob);
-          tpp_dtype_kill(&key);
-          if( pCur->pBt->toilet.only ){
+          anvil_blob blob;
+          anvil_dtype_get_blb(&key, &blob);
+          size = anvil_blob_size(&blob);
+          anvil_blob_kill(&blob);
+          anvil_dtype_kill(&key);
+          if( pCur->pBt->anvil.only ){
             *pSize = size;
           }else if( *pSize != size ){
-            Rprintf("KEY ERROR %lld != (toilet) %zu [blob]\n", *pSize, size);
+            Rprintf("KEY ERROR %lld != (Anvil) %zu [blob]\n", *pSize, size);
           }
         }
       }
@@ -3519,8 +3519,8 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
   assert( cursorHoldsMutex(pCur) );
   rc = restoreCursorPosition(pCur);
   if( rc==SQLITE_OK ){
-#if HAVE_TOILET
-    if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+    if( !pCur->pBt->anvil.only ){
 #endif
     assert( pCur->eState==CURSOR_INVALID || pCur->eState==CURSOR_VALID );
     if( pCur->eState==CURSOR_INVALID ){
@@ -3530,35 +3530,35 @@ int sqlite3BtreeDataSize(BtCursor *pCur, u32 *pSize){
       getCellInfo(pCur);
       *pSize = pCur->info.nData;
     }
-#if HAVE_TOILET
+#if HAVE_ANVIL
     }
-    if( pCur->toilet.dtable ){
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
-        tpp_blob value;
-        if( pCur->toilet.flags & BTREE_INTKEY ){
+    if( pCur->anvil.dtable ){
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      if( anvil_dtable_iter_valid(pCur->anvil.cursor) ){
+        anvil_blob value;
+        if( pCur->anvil.flags & BTREE_INTKEY ){
           /* sanity check */
           uint32_t id;
-          tpp_dtype key;
-          tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-          tpp_dtype_get_int(&key, &id);
-          if( !pCur->pBt->toilet.only && pCur->info.nKey != id && pCur->info.nKey ){
-            Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
+          anvil_dtype key;
+          anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+          anvil_dtype_get_int(&key, &id);
+          if( !pCur->pBt->anvil.only && pCur->info.nKey != id && pCur->info.nKey ){
+            Rprintf("%s(): btree key is %u; Anvil key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
           }
         }
-        tpp_dtable_iter_value(pCur->toilet.cursor, &value);
-        if( pCur->pBt->toilet.only ){
-          *pSize = tpp_blob_size(&value);
-        }else if( *pSize != tpp_blob_size(&value) ){
-          Rprintf("SIZE ERROR %d != (toilet) %d [blob]\n", *pSize, tpp_blob_size(&value));
+        anvil_dtable_iter_value(pCur->anvil.cursor, &value);
+        if( pCur->pBt->anvil.only ){
+          *pSize = anvil_blob_size(&value);
+        }else if( *pSize != anvil_blob_size(&value) ){
+          Rprintf("SIZE ERROR %d != (Anvil) %d [blob]\n", *pSize, anvil_blob_size(&value));
         }
-        tpp_blob_kill(&value);
+        anvil_blob_kill(&value);
       }else{
-        if( pCur->pBt->toilet.only ){
+        if( pCur->pBt->anvil.only ){
           *pSize = 0;
         }else if( *pSize ){
-          Rprintf("SIZE ERROR %d != (toilet) 0\n", *pSize);
+          Rprintf("SIZE ERROR %d != (Anvil) 0\n", *pSize);
         }
       }
     }
@@ -3865,8 +3865,8 @@ int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
   rc = restoreCursorPosition(pCur);
   if( rc==SQLITE_OK ){
     assert( pCur->eState==CURSOR_VALID );
-#if HAVE_TOILET
-    if (!pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+    if (!pCur->pBt->anvil.only ){
 #endif
     assert( pCur->pPage!=0 );
     if( pCur->pPage->intKey ){
@@ -3875,37 +3875,37 @@ int sqlite3BtreeKey(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
     assert( pCur->pPage->intKey==0 );
     assert( pCur->idx>=0 && pCur->idx<pCur->pPage->nCell );
     rc = accessPayload(pCur, offset, amt, (unsigned char*)pBuf, 0, 0);
-#if HAVE_TOILET
+#if HAVE_ANVIL
     }
-    if( pCur->toilet.dtable && rc == SQLITE_OK ){
+    if( pCur->anvil.dtable && rc == SQLITE_OK ){
       uint32_t size;
-      tpp_dtype key;
+      anvil_dtype key;
       const void *data;
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      assert(tpp_dtable_iter_valid(pCur->toilet.cursor));
-      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-      if( pCur->toilet.flags & BTREE_INTKEY ){
-        assert(tpp_dtype_get_type(&key) == DT_UINT32);
-        tpp_dtype_get_int(&key, &pCur->toilet.fetch_key);
-        size = sizeof(pCur->toilet.fetch_key);
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      assert(anvil_dtable_iter_valid(pCur->anvil.cursor));
+      anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+      if( pCur->anvil.flags & BTREE_INTKEY ){
+        assert(anvil_dtype_get_type(&key) == DT_UINT32);
+        anvil_dtype_get_int(&key, &pCur->anvil.fetch_key);
+        size = sizeof(pCur->anvil.fetch_key);
         /* endianness? */
-        data = &pCur->toilet.fetch_key;
+        data = &pCur->anvil.fetch_key;
       }else{
-        tpp_blob value;
-        tpp_dtype_get_blb(&key, &value);
-        size = tpp_blob_size(&value);
-        data = tpp_blob_data(&value);
-        /* somebody else still has a copy of this blob in toilet,
+        anvil_blob value;
+        anvil_dtype_get_blb(&key, &value);
+        size = anvil_blob_size(&value);
+        data = anvil_blob_data(&value);
+        /* somebody else still has a copy of this blob in Anvil,
          * so we can copy it even after killing this one */
-        tpp_blob_kill(&value);
-        tpp_dtype_kill(&key);
+        anvil_blob_kill(&value);
+        anvil_dtype_kill(&key);
       }
       /* XXX check size? */
-      if( pCur->pBt->toilet.only ){
+      if( pCur->pBt->anvil.only ){
         memcpy(pBuf, data + offset, amt);
       }else if( memcmp(pBuf, data + offset, amt) ){
-        Rprintf("DATA ERROR (toilet) key\n");
+        Rprintf("DATA ERROR (Anvil) key\n");
       }
     }
 #endif
@@ -3936,31 +3936,31 @@ int sqlite3BtreeData(BtCursor *pCur, u32 offset, u32 amt, void *pBuf){
   rc = restoreCursorPosition(pCur);
   if( rc==SQLITE_OK ){
     assert( pCur->eState==CURSOR_VALID );
-#if HAVE_TOILET
-    if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+    if( !pCur->pBt->anvil.only ){
 #endif
     assert( pCur->pPage!=0 );
     assert( pCur->idx>=0 && pCur->idx<pCur->pPage->nCell );
     rc = accessPayload(pCur, offset, amt, pBuf, 1, 0);
-#if HAVE_TOILET
+#if HAVE_ANVIL
     }
-    if( pCur->toilet.dtable && rc == SQLITE_OK ){
+    if( pCur->anvil.dtable && rc == SQLITE_OK ){
       uint32_t size;
-      tpp_blob value;
+      anvil_blob value;
       const void *data;
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      assert(tpp_dtable_iter_valid(pCur->toilet.cursor));
-      tpp_dtable_iter_value(pCur->toilet.cursor, &value);
-      size = tpp_blob_size(&value);
-      data = tpp_blob_data(&value);
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      assert(anvil_dtable_iter_valid(pCur->anvil.cursor));
+      anvil_dtable_iter_value(pCur->anvil.cursor, &value);
+      size = anvil_blob_size(&value);
+      data = anvil_blob_data(&value);
       /* XXX check size? */
-      if( pCur->pBt->toilet.only ){
+      if( pCur->pBt->anvil.only ){
         memcpy(pBuf, data + offset, amt);
       }else if( memcmp(pBuf, data + offset, amt) ){
-        Rprintf("DATA ERROR (toilet) blob\n");
+        Rprintf("DATA ERROR (Anvil) blob\n");
       }
-      tpp_blob_kill(&value);
+      anvil_blob_kill(&value);
     }
 #endif
   }
@@ -4040,57 +4040,57 @@ static const unsigned char *fetchPayload(
 const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
-#if HAVE_TOILET
-  if( pCur->eState==CURSOR_VALID || pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( pCur->eState==CURSOR_VALID || pCur->pBt->anvil.only ){
 #else
   if( pCur->eState==CURSOR_VALID ){
 #endif
-#if HAVE_TOILET
+#if HAVE_ANVIL
     const void *data = NULL;
-    if( !pCur->pBt->toilet.only ){
+    if( !pCur->pBt->anvil.only ){
       data = (const void*)fetchPayload(pCur, pAmt, 0);
     }
-    if( pCur->toilet.dtable ){
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      if( tpp_dtable_iter_valid(pCur->toilet.cursor) ){
-        tpp_dtype key;
+    if( pCur->anvil.dtable ){
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      if( anvil_dtable_iter_valid(pCur->anvil.cursor) ){
+        anvil_dtype key;
         const void *key_data;
-        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-        if( pCur->toilet.flags & BTREE_INTKEY ){
-          assert(tpp_dtype_get_type(&key) == DT_UINT32);
-          tpp_dtype_get_int(&key, &pCur->toilet.fetch_key);
+        anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+        if( pCur->anvil.flags & BTREE_INTKEY ){
+          assert(anvil_dtype_get_type(&key) == DT_UINT32);
+          anvil_dtype_get_int(&key, &pCur->anvil.fetch_key);
           /* endianness? */
-          key_data = &pCur->toilet.fetch_key;
-          if( pCur->pBt->toilet.only ){
-            *pAmt = sizeof(pCur->toilet.fetch_key);
+          key_data = &pCur->anvil.fetch_key;
+          if( pCur->pBt->anvil.only ){
+            *pAmt = sizeof(pCur->anvil.fetch_key);
             /* apparently *pAmt should be 0 for integer key tables */
             *pAmt = 0;
-          }else if( *pAmt != sizeof(pCur->toilet.fetch_key) && *pAmt ){
+          }else if( *pAmt != sizeof(pCur->anvil.fetch_key) && *pAmt ){
             /* apparently (see fetchPayload() above), *pAmt will always be 0 for integer key tables */
-            Yprintf("WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->toilet.fetch_key), *pAmt);
+            Yprintf("WHOA: key size (%d) != *pAmt (%d)!\n", sizeof(pCur->anvil.fetch_key), *pAmt);
           }
         }else{
-          tpp_blob value;
-          tpp_dtype_get_blb(&key, &value);
-          key_data = tpp_blob_data(&value);
-          if( pCur->pBt->toilet.only ){
-            /* somebody else still has a copy of this blob in toilet,
+          anvil_blob value;
+          anvil_dtype_get_blb(&key, &value);
+          key_data = anvil_blob_data(&value);
+          if( pCur->pBt->anvil.only ){
+            /* somebody else still has a copy of this blob in Anvil,
              * so we can return it even after killing this one */
-            *pAmt = tpp_blob_size(&value);
-          }else if( *pAmt != tpp_blob_size(&value) ){
-            Rprintf("WHOA: key size (%d) [blob] != *pAmt (%d)!\n", tpp_blob_size(&value), *pAmt);
+            *pAmt = anvil_blob_size(&value);
+          }else if( *pAmt != anvil_blob_size(&value) ){
+            Rprintf("WHOA: key size (%d) [blob] != *pAmt (%d)!\n", anvil_blob_size(&value), *pAmt);
           }
-          tpp_blob_kill(&value);
-          tpp_dtype_kill(&key);
+          anvil_blob_kill(&value);
+          anvil_dtype_kill(&key);
         }
-        if( pCur->pBt->toilet.only ){
+        if( pCur->pBt->anvil.only ){
           data = key_data;
         }else if( memcmp(key_data, data, *pAmt) ){
-          Rprintf("DATA ERROR (toilet) key\n");
+          Rprintf("DATA ERROR (Anvil) key\n");
         }
       }else{
-        Rprintf("MISSING TOILET KEY\n");
+        Rprintf("MISSING ANVIL KEY\n");
       }
     }
     return data;
@@ -4103,29 +4103,29 @@ const void *sqlite3BtreeKeyFetch(BtCursor *pCur, int *pAmt){
 const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   assert( cursorHoldsMutex(pCur) );
-#if HAVE_TOILET
-  if( pCur->eState==CURSOR_VALID || pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( pCur->eState==CURSOR_VALID || pCur->pBt->anvil.only ){
 #else
   if( pCur->eState==CURSOR_VALID ){
 #endif
-#if HAVE_TOILET
+#if HAVE_ANVIL
     const void *data;
-    if( !pCur->pBt->toilet.only ){
+    if( !pCur->pBt->anvil.only ){
       data = (const void*)fetchPayload(pCur, pAmt, 1);
     }
-    if( pCur->toilet.dtable ){
+    if( pCur->anvil.dtable ){
       int min;
       size_t size;
-      tpp_blob value;
+      anvil_blob value;
       const void *blob;
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      tpp_dtable_iter_value(pCur->toilet.cursor, &value);
-      size = tpp_blob_size(&value);
-      blob = tpp_blob_data(&value);
-      if( pCur->pBt->toilet.only ){
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      anvil_dtable_iter_value(pCur->anvil.cursor, &value);
+      size = anvil_blob_size(&value);
+      blob = anvil_blob_data(&value);
+      if( pCur->pBt->anvil.only ){
         *pAmt = size;
-        /* somebody else still has a copy of this blob in toilet,
+        /* somebody else still has a copy of this blob in Anvil,
          * so we can return it even after killing this one below */
         data = blob;
       }else{
@@ -4134,10 +4134,10 @@ const void *sqlite3BtreeDataFetch(BtCursor *pCur, int *pAmt){
           Rprintf("WHOA: [blob] min (%d) != *pAmt (%d)!\n", min, *pAmt);
         }
         if( memcmp(blob, data, min) ){
-          Rprintf("DATA ERROR (toilet) blob\n");
+          Rprintf("DATA ERROR (Anvil) blob\n");
         }
       }
-      tpp_blob_kill(&value);
+      anvil_blob_kill(&value);
     }
     return data;
 #else
@@ -4334,8 +4334,8 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
   int rc;
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
@@ -4351,24 +4351,24 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
       rc = moveToLeftmost(pCur);
     }
   }
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
-  if( pCur->toilet.dtable ){
-    if( !pCur->toilet.cursor)
-      restoreToiletCursor(pCur, pCur->pBt);
-    tpp_dtable_iter_first(pCur->toilet.cursor);
+  if( pCur->anvil.dtable ){
+    if( !pCur->anvil.cursor)
+      restoreAnvilCursor(pCur, pCur->pBt);
+    anvil_dtable_iter_first(pCur->anvil.cursor);
     /* FIXME: check return value, etc. */
-    if( pCur->pBt->toilet.only ){
-      *pRes = !tpp_dtable_iter_valid(pCur->toilet.cursor);
+    if( pCur->pBt->anvil.only ){
+      *pRes = !anvil_dtable_iter_valid(pCur->anvil.cursor);
       pCur->eState = *pRes ? CURSOR_INVALID : CURSOR_VALID;
       rc = SQLITE_OK;
-    }else if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+    }else if( (pCur->anvil.flags & BTREE_INTKEY) && anvil_dtable_iter_valid(pCur->anvil.cursor) ){
       uint32_t id;
-      tpp_dtype key;
-      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-      tpp_dtype_get_int(&key, &id);
+      anvil_dtype key;
+      anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+      anvil_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
+        Rprintf("%s(): btree key is %u; Anvil key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
   }
@@ -4384,8 +4384,8 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
   int rc;
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
  
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
@@ -4402,24 +4402,24 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
       pCur->atLast = rc==SQLITE_OK;
     }
   }
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
-  if( pCur->toilet.dtable ){
-    if( !pCur->toilet.cursor)
-      restoreToiletCursor(pCur, pCur->pBt);
-    tpp_dtable_iter_last(pCur->toilet.cursor);
+  if( pCur->anvil.dtable ){
+    if( !pCur->anvil.cursor)
+      restoreAnvilCursor(pCur, pCur->pBt);
+    anvil_dtable_iter_last(pCur->anvil.cursor);
     /* FIXME: check return value, etc. */
-    if( pCur->pBt->toilet.only ){
-      *pRes = !tpp_dtable_iter_valid(pCur->toilet.cursor);
+    if( pCur->pBt->anvil.only ){
+      *pRes = !anvil_dtable_iter_valid(pCur->anvil.cursor);
       pCur->eState = *pRes ? CURSOR_INVALID : CURSOR_VALID;
       rc = SQLITE_OK;
-    }else if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+    }else if( (pCur->anvil.flags & BTREE_INTKEY) && anvil_dtable_iter_valid(pCur->anvil.cursor) ){
       uint32_t id;
-      tpp_dtype key;
-      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-      tpp_dtype_get_int(&key, &id);
+      anvil_dtype key;
+      anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+      anvil_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
+        Rprintf("%s(): btree key is %u; Anvil key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
   }
@@ -4427,189 +4427,189 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
   return rc;
 }
 
-#if HAVE_TOILET
-static int toilet_wrap_vdbe_record_compare_2(const void * pKey1, size_t nKey1, void * user)
+#if HAVE_ANVIL
+static int anvil_wrap_vdbe_record_compare_2(const void * pKey1, size_t nKey1, void * user)
 {
   UnpackedRecord * pPKey2 = (UnpackedRecord *) user;
   return sqlite3VdbeRecordCompare(nKey1, pKey1, pPKey2);
 }
-static int sqlite3BtreeMovetoToilet(BtCursor * pCur, UnpackedRecord * pUnKey, i64 nKey, int * pRes)
+static int sqlite3BtreeMovetoAnvil(BtCursor * pCur, UnpackedRecord * pUnKey, i64 nKey, int * pRes)
 {
   int r;
   /* all right, screw this idiotic indenting style, I'm using mine */
-  if(pCur->toilet.flags & BTREE_INTKEY)
+  if(pCur->anvil.flags & BTREE_INTKEY)
   {
-    tpp_dtype key;
+    anvil_dtype key;
     if(nKey > UINT_MAX)
     {
       /* XXX FIXME */
-      Rprintf("UNIMPLEMENTED TOILET SEEK (nKey)\n");
+      Rprintf("UNIMPLEMENTED ANVIL SEEK (nKey)\n");
       return -1;
     }
-    tpp_dtype_int(&key, nKey);
-    if( !pCur->toilet.cursor)
-      restoreToiletCursor(pCur, pCur->pBt);
-    r = tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
+    anvil_dtype_int(&key, nKey);
+    if( !pCur->anvil.cursor)
+      restoreAnvilCursor(pCur, pCur->pBt);
+    r = anvil_dtable_iter_seek(pCur->anvil.cursor, &key);
     if(r)
     {
       /* found it */
-      if(pCur->pBt->toilet.only)
+      if(pCur->pBt->anvil.only)
         *pRes = 0;
       else if(*pRes)
-        Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
+        Rprintf("SEEK ERROR %d != (Anvil) 0\n", *pRes);
       r = 0;
     }
     else
     {
-      if(!tpp_dtable_iter_valid(pCur->toilet.cursor))
+      if(!anvil_dtable_iter_valid(pCur->anvil.cursor))
       {
-        if(pCur->pBt->toilet.only)
+        if(pCur->pBt->anvil.only)
           *pRes = -1;
         else if(*pRes >= 0)
-          Rprintf("SEEK ERROR %d != (toilet) [invalid]\n", *pRes);
+          Rprintf("SEEK ERROR %d != (Anvil) [invalid]\n", *pRes);
       }
       else
       {
         uint32_t id;
-        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-        tpp_dtype_get_int(&key, &id);
-        if(!pCur->pBt->toilet.only && *pRes < 0 && id >= nKey)
+        anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+        anvil_dtype_get_int(&key, &id);
+        if(!pCur->pBt->anvil.only && *pRes < 0 && id >= nKey)
         {
           /* THIS IS A HACK */
           /* The default btree code is lazy, and won't find the actual key in
            * many cases. Instead, it only finds the leaf page that would contain
            * the key, if it existed - even if it does exist. The cursor seems to
            * be left pointing at the first entry of that page, which will be
-           * less than (or equal to) the requested key. So we move the toilet
+           * less than (or equal to) the requested key. So we move the Anvil
            * cursor backwards to find the same entry, even though this is not
            * really necessary. We only need to do this when we are running
-           * toilet alongside the btree code and comparing the results. */
-          Yprintf("%s(): toilet matching btree laziness with horrible hack\n", __FUNCTION__);
-          tpp_dtype_int(&key, pCur->info.nKey);
-          tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
-          tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-          tpp_dtype_get_int(&key, &id);
+           * Anvil alongside the btree code and comparing the results. */
+          Yprintf("%s(): Anvil matching btree laziness with horrible hack\n", __FUNCTION__);
+          anvil_dtype_int(&key, pCur->info.nKey);
+          anvil_dtable_iter_seek(pCur->anvil.cursor, &key);
+          anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+          anvil_dtype_get_int(&key, &id);
         }
         if(nKey < id)
         {
-          if(pCur->pBt->toilet.only)
+          if(pCur->pBt->anvil.only)
             *pRes = 1;
           else if(*pRes <= 0)
-            Rprintf("SEEK ERROR %d != (toilet) 1\n", *pRes);
+            Rprintf("SEEK ERROR %d != (Anvil) 1\n", *pRes);
         }
         else if(nKey > id)
         {
-          if(pCur->pBt->toilet.only)
+          if(pCur->pBt->anvil.only)
             *pRes = -1;
           else if(*pRes >= 0)
-            Rprintf("SEEK ERROR %d != (toilet) -1\n", *pRes);
+            Rprintf("SEEK ERROR %d != (Anvil) -1\n", *pRes);
         }
         else
         {
-          if(pCur->pBt->toilet.only)
+          if(pCur->pBt->anvil.only)
             *pRes = 0;
           else if(*pRes)
-            Rprintf("SEEK ERROR %d != (toilet) 0\n", *pRes);
+            Rprintf("SEEK ERROR %d != (Anvil) 0\n", *pRes);
         }
       }
     }
   }
   else
   {
-    if( !pCur->toilet.cursor)
-      restoreToiletCursor(pCur, pCur->pBt);
-    r = tpp_dtable_iter_seek_test(pCur->toilet.cursor, toilet_wrap_vdbe_record_compare_2, pUnKey);
+    if( !pCur->anvil.cursor)
+      restoreAnvilCursor(pCur, pCur->pBt);
+    r = anvil_dtable_iter_seek_test(pCur->anvil.cursor, anvil_wrap_vdbe_record_compare_2, pUnKey);
     if(r)
     {
       /* found it */
-      if(pCur->pBt->toilet.only)
+      if(pCur->pBt->anvil.only)
         *pRes = 0;
       else if(*pRes)
-        Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
+        Rprintf("SEEK ERROR %d != (Anvil) 0 [blob]\n", *pRes);
       r = 0;
     }
     else
     {
-      if(!tpp_dtable_iter_valid(pCur->toilet.cursor))
+      if(!anvil_dtable_iter_valid(pCur->anvil.cursor))
       {
-        if(pCur->pBt->toilet.only)
+        if(pCur->pBt->anvil.only)
           *pRes = -1;
         else if(*pRes >= 0)
-          Rprintf("SEEK ERROR %d != (toilet) [invalid, blob]\n", *pRes);
+          Rprintf("SEEK ERROR %d != (Anvil) [invalid, blob]\n", *pRes);
       }
       else
       {
         int c;
         size_t size;
-        tpp_dtype key;
-        tpp_blob blob;
+        anvil_dtype key;
+        anvil_blob blob;
         const void * data;
-        tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-        tpp_dtype_get_blb(&key, &blob);
-        tpp_dtype_kill(&key);
-        data = tpp_blob_data(&blob);
-        size = tpp_blob_size(&blob);
+        anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+        anvil_dtype_get_blb(&key, &blob);
+        anvil_dtype_kill(&key);
+        data = anvil_blob_data(&blob);
+        size = anvil_blob_size(&blob);
         c = sqlite3VdbeRecordCompare(size, data, pUnKey);
-        if(!pCur->pBt->toilet.only && *pRes < 0 && c >= 0)
+        if(!pCur->pBt->anvil.only && *pRes < 0 && c >= 0)
         {
           /* THIS IS A HACK */
           /* The default btree code is lazy, and won't find the actual key in
            * many cases. Instead, it only finds the leaf page that would contain
            * the key, if it existed - even if it does exist. The cursor seems to
            * be left pointing at the first entry of that page, which will be
-           * less than (or equal to) the requested key. So we move the toilet
+           * less than (or equal to) the requested key. So we move the Anvil
            * cursor backwards to find the same entry, even though this is not
            * really necessary. We only need to do this when we are running
-           * toilet alongside the btree code and comparing the results. */
+           * Anvil alongside the btree code and comparing the results. */
           int bts;
           const uint8_t * btk;
-          tpp_dtable * save = pCur->toilet.dtable;
-          Yprintf("%s(): toilet matching btree laziness with horrible hack [blob]\n", __FUNCTION__);
-          /* temporarily disable toilet processing just to fetch the btree
-           * key, since the btree and toilet cursors are out of sync */
-          pCur->toilet.dtable = NULL;
+          anvil_dtable * save = pCur->anvil.dtable;
+          Yprintf("%s(): Anvil matching btree laziness with horrible hack [blob]\n", __FUNCTION__);
+          /* temporarily disable Anvil processing just to fetch the btree
+           * key, since the btree and Anvil cursors are out of sync */
+          pCur->anvil.dtable = NULL;
           btk = sqlite3BtreeKeyFetch(pCur, &bts);
-          pCur->toilet.dtable = save;
-          tpp_blob_kill(&blob);
-          tpp_blob_new(&blob, bts, btk);
-          tpp_dtype_blb(&key, &blob);
-          tpp_dtable_iter_seek(pCur->toilet.cursor, &key);
-          tpp_dtype_kill(&key);
-          tpp_blob_kill(&blob);
-          tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-          tpp_dtype_get_blb(&key, &blob);
-          tpp_dtype_kill(&key);
-          data = tpp_blob_data(&blob);
-          size = tpp_blob_size(&blob);
+          pCur->anvil.dtable = save;
+          anvil_blob_kill(&blob);
+          anvil_blob_new(&blob, bts, btk);
+          anvil_dtype_blb(&key, &blob);
+          anvil_dtable_iter_seek(pCur->anvil.cursor, &key);
+          anvil_dtype_kill(&key);
+          anvil_blob_kill(&blob);
+          anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+          anvil_dtype_get_blb(&key, &blob);
+          anvil_dtype_kill(&key);
+          data = anvil_blob_data(&blob);
+          size = anvil_blob_size(&blob);
           c = sqlite3VdbeRecordCompare(size, data, pUnKey);
         }
-        tpp_blob_kill(&blob);
+        anvil_blob_kill(&blob);
         if(c > 0)
         {
-          if(pCur->pBt->toilet.only)
+          if(pCur->pBt->anvil.only)
             *pRes = 1;
           else if(*pRes <= 0)
-            Rprintf("SEEK ERROR %d != (toilet) 1 [blob]\n", *pRes);
+            Rprintf("SEEK ERROR %d != (Anvil) 1 [blob]\n", *pRes);
         }
         else if(c < 0)
         {
-          if(pCur->pBt->toilet.only)
+          if(pCur->pBt->anvil.only)
             *pRes = -1;
           else if(*pRes >= 0)
-            Rprintf("SEEK ERROR %d != (toilet) -1 [blob]\n", *pRes);
+            Rprintf("SEEK ERROR %d != (Anvil) -1 [blob]\n", *pRes);
         }
         else
         {
-          if(pCur->pBt->toilet.only)
+          if(pCur->pBt->anvil.only)
             *pRes = 0;
           else if(*pRes)
-            Rprintf("SEEK ERROR %d != (toilet) 0 [blob]\n", *pRes);
+            Rprintf("SEEK ERROR %d != (Anvil) 0 [blob]\n", *pRes);
         }
       }
     }
   }
-  if(pCur->pBt->toilet.only)
-    pCur->eState = tpp_dtable_iter_valid(pCur->toilet.cursor) ? CURSOR_VALID : CURSOR_INVALID;
+  if(pCur->pBt->anvil.only)
+    pCur->eState = anvil_dtable_iter_valid(pCur->anvil.cursor) ? CURSOR_VALID : CURSOR_INVALID;
   return r;
 }
 #endif
@@ -4656,9 +4656,9 @@ int sqlite3BtreeMoveto(
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
 
-#if HAVE_TOILET
-  if( pCur->pBt->toilet.only ){
-    if( !(pCur->toilet.flags & BTREE_INTKEY) && !pUnKey ){
+#if HAVE_ANVIL
+  if( pCur->pBt->anvil.only ){
+    if( !(pCur->anvil.flags & BTREE_INTKEY) && !pUnKey ){
       pUnKey = sqlite3VdbeRecordUnpack(pCur->pKeyInfo, nKey, pKey, aSpace, sizeof(aSpace));
       if( !pUnKey ) return SQLITE_NOMEM;
     }
@@ -4810,9 +4810,9 @@ int sqlite3BtreeMoveto(
     if( rc ) goto moveto_finish;
   }
 moveto_finish:
-#if HAVE_TOILET
-  if( pCur->toilet.dtable && rc == SQLITE_OK ){
-    rc = sqlite3BtreeMovetoToilet(pCur, pUnKey, nKey, pRes);
+#if HAVE_ANVIL
+  if( pCur->anvil.dtable && rc == SQLITE_OK ){
+    rc = sqlite3BtreeMovetoAnvil(pCur, pUnKey, nKey, pRes);
     if( rc < 0 ){
       rc = SQLITE_INTERNAL;
     }
@@ -4862,11 +4862,11 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
   MemPage *pPage;
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   assert( cursorHoldsMutex(pCur) );
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   rc = restoreCursorPosition(pCur);
@@ -4886,33 +4886,33 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
   }
   pCur->skip = 0;
 
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   assert( pPage->isInit );
   assert( pCur->idx<pPage->nCell );
 
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
-  if( pCur->toilet.dtable ){
-    if( !pCur->toilet.cursor)
-      restoreToiletCursor(pCur, pCur->pBt);
-    if( !pCur->pBt->toilet.only )
-    if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+  if( pCur->anvil.dtable ){
+    if( !pCur->anvil.cursor)
+      restoreAnvilCursor(pCur, pCur->pBt);
+    if( !pCur->pBt->anvil.only )
+    if( (pCur->anvil.flags & BTREE_INTKEY) && anvil_dtable_iter_valid(pCur->anvil.cursor) ){
       uint32_t id;
-      tpp_dtype key;
-      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-      tpp_dtype_get_int(&key, &id);
+      anvil_dtype key;
+      anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+      anvil_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
+        Rprintf("%s(): btree key is %u; Anvil key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
-    rc = tpp_dtable_iter_next(pCur->toilet.cursor);
-    if( pCur->pBt->toilet.only ){
+    rc = anvil_dtable_iter_next(pCur->anvil.cursor);
+    if( pCur->pBt->anvil.only ){
       if( !rc ){
-        tpp_dtable_iter_prev(pCur->toilet.cursor);
+        anvil_dtable_iter_prev(pCur->anvil.cursor);
       }
-      pCur->eState = tpp_dtable_iter_valid(pCur->toilet.cursor) ? CURSOR_VALID : CURSOR_INVALID;
+      pCur->eState = anvil_dtable_iter_valid(pCur->anvil.cursor) ? CURSOR_VALID : CURSOR_INVALID;
       *pRes = !rc;
       return SQLITE_OK;
     }
@@ -4940,14 +4940,14 @@ int sqlite3BtreeNext(BtCursor *pCur, int *pRes){
     }while( pCur->idx>=pPage->nCell );
     *pRes = 0;
     if( pPage->leafData ){
-#if HAVE_TOILET
-      tpp_dtable *save = pCur->toilet.dtable;
-      /* disable toilet for the recursive call to keep the cursors in sync */
-      pCur->toilet.dtable = NULL;
+#if HAVE_ANVIL
+      anvil_dtable *save = pCur->anvil.dtable;
+      /* disable Anvil for the recursive call to keep the cursors in sync */
+      pCur->anvil.dtable = NULL;
 #endif
       rc = sqlite3BtreeNext(pCur, pRes);
-#if HAVE_TOILET
-      pCur->toilet.dtable = save;
+#if HAVE_ANVIL
+      pCur->anvil.dtable = save;
 #endif
     }else{
       rc = SQLITE_OK;
@@ -4975,11 +4975,11 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
   MemPage *pPage;
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
 
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   assert( cursorHoldsMutex(pCur) );
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   rc = restoreCursorPosition(pCur);
@@ -4998,23 +4998,23 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
   }
   pCur->skip = 0;
 
-#if HAVE_TOILET
-  if( pCur->toilet.dtable ){
-    if( !pCur->toilet.cursor)
-      restoreToiletCursor(pCur, pCur->pBt);
-    if( !pCur->pBt->toilet.only )
-    if( (pCur->toilet.flags & BTREE_INTKEY) && tpp_dtable_iter_valid(pCur->toilet.cursor) ){
+#if HAVE_ANVIL
+  if( pCur->anvil.dtable ){
+    if( !pCur->anvil.cursor)
+      restoreAnvilCursor(pCur, pCur->pBt);
+    if( !pCur->pBt->anvil.only )
+    if( (pCur->anvil.flags & BTREE_INTKEY) && anvil_dtable_iter_valid(pCur->anvil.cursor) ){
       uint32_t id;
-      tpp_dtype key;
-      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-      tpp_dtype_get_int(&key, &id);
+      anvil_dtype key;
+      anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+      anvil_dtype_get_int(&key, &id);
       if( pCur->info.nKey != id && pCur->info.nKey ){
-        Rprintf("%s(): btree key is %u; toilet key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
+        Rprintf("%s(): btree key is %u; Anvil key is %u\n", __FUNCTION__, (unsigned) pCur->info.nKey, id);
       }
     }
-    rc = tpp_dtable_iter_prev(pCur->toilet.cursor);
-    if( pCur->pBt->toilet.only ){
-      pCur->eState = tpp_dtable_iter_valid(pCur->toilet.cursor) ? CURSOR_VALID : CURSOR_INVALID;
+    rc = anvil_dtable_iter_prev(pCur->anvil.cursor);
+    if( pCur->pBt->anvil.only ){
+      pCur->eState = anvil_dtable_iter_valid(pCur->anvil.cursor) ? CURSOR_VALID : CURSOR_INVALID;
       *pRes = !rc;
       return SQLITE_OK;
     }
@@ -5044,14 +5044,14 @@ int sqlite3BtreePrevious(BtCursor *pCur, int *pRes){
     pCur->info.nSize = 0;
     pCur->validNKey = 0;
     if( pPage->leafData && !pPage->leaf ){
-#if HAVE_TOILET
-      tpp_dtable *save = pCur->toilet.dtable;
-      /* disable toilet for the recursive call to keep the cursors in sync */
-      pCur->toilet.dtable = NULL;
+#if HAVE_ANVIL
+      anvil_dtable *save = pCur->anvil.dtable;
+      /* disable Anvil for the recursive call to keep the cursors in sync */
+      pCur->anvil.dtable = NULL;
 #endif
       rc = sqlite3BtreePrevious(pCur, pRes);
-#if HAVE_TOILET
-      pCur->toilet.dtable = save;
+#if HAVE_ANVIL
+      pCur->anvil.dtable = save;
 #endif
     }else{
       rc = SQLITE_OK;
@@ -6845,11 +6845,11 @@ int sqlite3BtreeInsert(
   unsigned char *newCell = 0;
   Dprintf("\"%s\", %d, [%d] %lld, %d [\"%s\"], %d, %d", sqlite3BtreeGetFilename(p), pCur->pgnoRoot, pCur->pPage ? pCur->pPage->intKey : -1, nKey, nData, pData, nZero, appendBias);
 
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   assert( cursorHoldsMutex(pCur) );
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   if( pBt->inTransaction!=TRANS_WRITE ){
@@ -6861,13 +6861,13 @@ int sqlite3BtreeInsert(
   if( !pCur->wrFlag ){
     return SQLITE_PERM;   /* Cursor not open for writing */
   }
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   if( checkReadLocks(pCur->pBtree, pCur->pgnoRoot, pCur, nKey) ){
     return SQLITE_LOCKED; /* The table pCur points to has a read lock */
   }
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   if( pCur->eState==CURSOR_FAULT ){
@@ -6876,8 +6876,8 @@ int sqlite3BtreeInsert(
 
   /* Save the positions of any other cursors open on this table */
   clearCursorPosition(pCur);
-#if HAVE_TOILET
-  if( !pCur->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pCur->pBt->anvil.only ){
 #endif
   if( 
     SQLITE_OK!=(rc = saveAllCursors(pBt, pCur->pgnoRoot, pCur)) ||
@@ -6885,12 +6885,12 @@ int sqlite3BtreeInsert(
   ){
     return rc;
   }
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }else{
     if( SQLITE_OK!=(rc = saveAllCursors(pBt, pCur->pgnoRoot, pCur)) ){
       return rc;
     }
-    goto do_toilet;
+    goto do_anvil;
   }
 #endif
 
@@ -6936,31 +6936,31 @@ int sqlite3BtreeInsert(
   rc = balance(pPage, 1);
   if( rc==SQLITE_OK ){
     moveToRoot(pCur);
-#if HAVE_TOILET
-    if( pCur->toilet.dtable ){
-    do_toilet:
+#if HAVE_ANVIL
+    if( pCur->anvil.dtable ){
+    do_anvil:
       if( nKey > UINT_MAX || nZero ){
-        Rprintf("UNIMPLEMENTED TOILET APPEND (nKey = %lld, nZero = %d)\n", nKey, nZero);
+        Rprintf("UNIMPLEMENTED ANVIL APPEND (nKey = %lld, nZero = %d)\n", nKey, nZero);
       }else{
-        tpp_dtype key;
-        tpp_blob value;
-        if( pCur->toilet.flags & BTREE_INTKEY ){
-          tpp_dtype_int(&key, nKey);
+        anvil_dtype key;
+        anvil_blob value;
+        if( pCur->anvil.flags & BTREE_INTKEY ){
+          anvil_dtype_int(&key, nKey);
         }else{
-          tpp_blob_new(&value, nKey, pKey);
-          tpp_dtype_blb(&key, &value);
-          tpp_blob_kill(&value);
+          anvil_blob_new(&value, nKey, pKey);
+          anvil_dtype_blb(&key, &value);
+          anvil_blob_kill(&value);
         }
         if( pData ){
-          tpp_blob_new(&value, nData, pData);
+          anvil_blob_new(&value, nData, pData);
         }else{
           uint32_t data = nData;
-          tpp_blob_new(&value, sizeof(data), &data);
+          anvil_blob_new(&value, sizeof(data), &data);
         }
-        rc = tpp_dtable_insert(pCur->toilet.dtable, &key, &value, appendBias ? true : false);
+        rc = anvil_dtable_insert(pCur->anvil.dtable, &key, &value, appendBias ? true : false);
         rc = (rc < 0) ? SQLITE_ERROR : SQLITE_OK;
-        tpp_blob_kill(&value);
-        tpp_dtype_kill(&key);
+        anvil_blob_kill(&value);
+        anvil_dtype_kill(&key);
       }
     }
 #endif
@@ -6982,12 +6982,12 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   BtShared *pBt = p->pBt;
   Dprintf("\"%s\", %d", sqlite3BtreeGetFilename(pCur->pBtree), pCur->idx);
 
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   assert( cursorHoldsMutex(pCur) );
   assert( pPage->isInit );
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
 #endif
   if( pBt->inTransaction!=TRANS_WRITE ){
@@ -6999,8 +6999,8 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   if( pCur->eState==CURSOR_FAULT ){
     return pCur->skip;
   }
-#if HAVE_TOILET
-  if( !pBt->toilet.only )
+#if HAVE_ANVIL
+  if( !pBt->anvil.only )
 #endif
   if( pCur->idx >= pPage->nCell ){
     return SQLITE_ERROR;  /* The cursor is not pointing to anything */
@@ -7020,16 +7020,16 @@ int sqlite3BtreeDelete(BtCursor *pCur){
   if( 
     (rc = restoreCursorPosition(pCur))!=0 ||
     (rc = saveAllCursors(pBt, pCur->pgnoRoot, pCur))!=0 ||
-#if HAVE_TOILET
-    !pBt->toilet.only &&
+#if HAVE_ANVIL
+    !pBt->anvil.only &&
 #endif
     (rc = sqlite3PagerWrite(pPage->pDbPage))!=0
   ){
     return rc;
   }
 
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   /* Locate the cell within its page and leave pCell pointing to the
   ** data. The clearCell() call frees any overflow pages associated with the
@@ -7094,79 +7094,79 @@ int sqlite3BtreeDelete(BtCursor *pCur){
     dropCell(pPage, pCur->idx, cellSizePtr(pPage, pCell));
     rc = balance(pPage, 0);
   }
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }else{
     rc = SQLITE_OK;
   }
 #endif
   if( rc==SQLITE_OK ){
-#if HAVE_TOILET
-    if( pCur->toilet.dtable ){
-      if( !pCur->toilet.cursor)
-        restoreToiletCursor(pCur, pCur->pBt);
-      tpp_dtype key;
-      tpp_dtable_iter_key(pCur->toilet.cursor, &key);
-      rc = tpp_dtable_remove(pCur->toilet.dtable, &key);
+#if HAVE_ANVIL
+    if( pCur->anvil.dtable ){
+      if( !pCur->anvil.cursor)
+        restoreAnvilCursor(pCur, pCur->pBt);
+      anvil_dtype key;
+      anvil_dtable_iter_key(pCur->anvil.cursor, &key);
+      rc = anvil_dtable_remove(pCur->anvil.dtable, &key);
       if( rc >= 0 ){
-        tpp_dtable_iter_first(pCur->toilet.cursor);
+        anvil_dtable_iter_first(pCur->anvil.cursor);
         rc = SQLITE_OK;
       }else{
         rc = SQLITE_INTERNAL;
       }
-      tpp_dtype_kill(&key);
+      anvil_dtype_kill(&key);
     }
     /* hmm, do we need to seek to where the btree cursor is about to go? */
-    if( !pBt->toilet.only )
+    if( !pBt->anvil.only )
 #endif
     moveToRoot(pCur);
   }
   return rc;
 }
 
-#if HAVE_TOILET
-static int sqlite3BtreeCreateTableToilet(Btree * p, int * piTable, int flags)
+#if HAVE_ANVIL
+static int sqlite3BtreeCreateTableAnvil(Btree * p, int * piTable, int flags)
 {
   /* all right, screw this idiotic indenting style, I'm using mine */
-  tpp_dtype key;
-  tpp_blob value;
-  tpp_params * config;
-  tpp_dtype_type key_type;
+  anvil_dtype key;
+  anvil_blob value;
+  anvil_params * config;
+  anvil_dtype_type key_type;
   uint32_t id, next;
   
-  tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
-  tpp_dtable_find(p->pBt->toilet.root, &key, &value);
-  id = *(uint32_t *) tpp_blob_data(&value);
-  assert(id >= TOILET_FIRST_TABLE_NO);
+  anvil_dtype_int(&key, ANVIL_ROOT_INFO_ROW);
+  anvil_dtable_find(p->pBt->anvil.root, &key, &value);
+  id = *(uint32_t *) anvil_blob_data(&value);
+  assert(id >= ANVIL_FIRST_TABLE_NO);
   next = id + 1;
-  tpp_blob_overwrite(&value, 0, &next, sizeof(next));
+  anvil_blob_overwrite(&value, 0, &next, sizeof(next));
   /* update the next table number */
-  tpp_dtable_insert(p->pBt->toilet.root, &key, &value, false);
-  tpp_blob_kill(&value);
+  anvil_dtable_insert(p->pBt->anvil.root, &key, &value, false);
+  anvil_blob_kill(&value);
   
-  if(p->pBt->toilet.only)
+  if(p->pBt->anvil.only)
     *piTable = id;
   else
     /* XXX HACK */
     id = *piTable;
-  assert(id >= TOILET_FIRST_TABLE_NO);
+  assert(id >= ANVIL_FIRST_TABLE_NO);
   
   /* store the flags for this table */
-  tpp_dtype_int(&key, id);
-  tpp_blob_new(&value, sizeof(flags), &flags);
-  tpp_dtable_insert(p->pBt->toilet.root, &key, &value, true);
+  anvil_dtype_int(&key, id);
+  anvil_blob_new(&value, sizeof(flags), &flags);
+  anvil_dtable_insert(p->pBt->anvil.root, &key, &value, true);
   
   /* create the table itself */
   if(flags & BTREE_INTKEY)
   {
     key_type = DT_UINT32;
-    config = p->pBt->toilet.tbl_config;
+    config = p->pBt->anvil.tbl_config;
   }
   else
   {
     key_type = DT_BLOB;
-    config = p->pBt->toilet.idx_config;
+    config = p->pBt->anvil.idx_config;
   }
-  tpp_dtable_cache_create_empty(p->pBt->toilet.cache, id, config, key_type);
+  anvil_dtable_cache_create_empty(p->pBt->anvil.cache, id, config, key_type);
   
   return 0;
 }
@@ -7319,14 +7319,14 @@ int sqlite3BtreeCreateTable(Btree *p, int *piTable, int flags){
   Dprintf("\"%s\", 0x%X", sqlite3BtreeGetFilename(p), flags);
   sqlite3BtreeEnter(p);
   p->pBt->db = p->db;
-#if HAVE_TOILET
-  if( !p->pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !p->pBt->anvil.only ){
 #endif
   rc = btreeCreateTable(p, piTable, flags);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
-  if( p->pBt->toilet.dir_fd >= 0 && rc == SQLITE_OK ){
-    rc = sqlite3BtreeCreateTableToilet(p, piTable, flags);
+  if( p->pBt->anvil.dir_fd >= 0 && rc == SQLITE_OK ){
+    rc = sqlite3BtreeCreateTableAnvil(p, piTable, flags);
     if( rc < 0 ){
       rc = SQLITE_INTERNAL;
     }
@@ -7581,8 +7581,8 @@ int sqlite3BtreeGetMeta(Btree *p, int idx, u32 *pMeta){
   }
 
   assert( idx>=0 && idx<=15 );
-#if HAVE_TOILET
-  if( !pBt->toilet.only ){
+#if HAVE_ANVIL
+  if( !pBt->anvil.only ){
 #endif
   rc = sqlite3PagerGet(pBt->pPager, 1, &pDbPage);
   if( rc ){
@@ -7592,21 +7592,21 @@ int sqlite3BtreeGetMeta(Btree *p, int idx, u32 *pMeta){
   pP1 = (unsigned char *)sqlite3PagerGetData(pDbPage);
   *pMeta = get4byte(&pP1[36 + idx*4]);
   sqlite3PagerUnref(pDbPage);
-#if HAVE_TOILET
+#if HAVE_ANVIL
   }
-  if( pBt->toilet.dir_fd >= 0 ){
-    tpp_dtype key;
-    tpp_blob value;
+  if( pBt->anvil.dir_fd >= 0 ){
+    anvil_dtype key;
+    anvil_blob value;
     const uint32_t *meta;
-    tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
-    tpp_dtable_find(pBt->toilet.root, &key, &value);
-    meta = tpp_blob_data(&value);
-    if( pBt->toilet.only ){
+    anvil_dtype_int(&key, ANVIL_ROOT_INFO_ROW);
+    anvil_dtable_find(pBt->anvil.root, &key, &value);
+    meta = anvil_blob_data(&value);
+    if( pBt->anvil.only ){
       *pMeta = meta[idx + 1];
     }else if( meta[idx + 1] != *pMeta ){
-      Rprintf("META ERROR [%d] %d != (toilet) %d\n", idx, *pMeta, meta[idx + 1]);
+      Rprintf("META ERROR [%d] %d != (Anvil) %d\n", idx, *pMeta, meta[idx + 1]);
     }
-    tpp_blob_kill(&value);
+    anvil_blob_kill(&value);
   }
 #endif
 
@@ -7638,10 +7638,10 @@ int sqlite3BtreeUpdateMeta(Btree *p, int idx, u32 iMeta){
   if( p->inTrans!=TRANS_WRITE ){
     rc = pBt->readOnly ? SQLITE_READONLY : SQLITE_ERROR;
   }else{
-#if HAVE_TOILET
-    if( pBt->toilet.only ){
+#if HAVE_ANVIL
+    if( pBt->anvil.only ){
       rc = SQLITE_OK;
-      goto do_toilet;
+      goto do_anvil;
     }else{
 #endif
     assert( pBt->pPage1!=0 );
@@ -7656,16 +7656,16 @@ int sqlite3BtreeUpdateMeta(Btree *p, int idx, u32 iMeta){
         pBt->incrVacuum = iMeta;
       }
 #endif
-#if HAVE_TOILET
-      if( pBt->toilet.dir_fd >= 0 ){
-        tpp_dtype key;
-        tpp_blob value;
-      do_toilet:
-        tpp_dtype_int(&key, TOILET_ROOT_INFO_ROW);
-        tpp_dtable_find(pBt->toilet.root, &key, &value);
-        tpp_blob_overwrite(&value, (idx + 1) * sizeof(uint32_t), &iMeta, sizeof(uint32_t));
-        tpp_dtable_insert(pBt->toilet.root, &key, &value, false);
-        tpp_blob_kill(&value);
+#if HAVE_ANVIL
+      if( pBt->anvil.dir_fd >= 0 ){
+        anvil_dtype key;
+        anvil_blob value;
+      do_anvil:
+        anvil_dtype_int(&key, ANVIL_ROOT_INFO_ROW);
+        anvil_dtable_find(pBt->anvil.root, &key, &value);
+        anvil_blob_overwrite(&value, (idx + 1) * sizeof(uint32_t), &iMeta, sizeof(uint32_t));
+        anvil_dtable_insert(pBt->anvil.root, &key, &value, false);
+        anvil_blob_kill(&value);
       }
     }
 #endif
@@ -7686,23 +7686,23 @@ int sqlite3BtreeFlags(BtCursor *pCur){
   MemPage *pPage;
   Dprintf("\"%s\", %d", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot);
   restoreCursorPosition(pCur);
-#if HAVE_TOILET
-  if( pCur->pBt->toilet.only ){
-    assert(pCur->toilet.dtable);
-    Dprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->toilet.flags | PTF_LEAF);
-    return pCur->toilet.flags | PTF_LEAF;
+#if HAVE_ANVIL
+  if( pCur->pBt->anvil.only ){
+    assert(pCur->anvil.dtable);
+    Dprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->anvil.flags | PTF_LEAF);
+    return pCur->anvil.flags | PTF_LEAF;
   }
 #endif
   pPage = pCur->pPage;
   assert( cursorHoldsMutex(pCur) );
   assert( pPage->pBt==pCur->pBt );
   Dprintf("\"%s\", -> 0x%X", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pPage ? pPage->aData[pPage->hdrOffset] : 0);
-#if HAVE_TOILET
-  if( pCur->toilet.dtable && pPage ){
+#if HAVE_ANVIL
+  if( pCur->anvil.dtable && pPage ){
     /* NOTE: bit 3 (0x8) is PTF_LEAF, and bits 0-2 are 0x5 (intkey+leafdata) for
      * tables and 0x2 (zerodata) for indices (these were the flags to CreateTable) */
-    if( (pPage->aData[pPage->hdrOffset] & 0x7) != pCur->toilet.flags ){
-      Rprintf("ERROR \"\":%d flags 0x%X != (toilet) 0x%X\n", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->toilet.flags);
+    if( (pPage->aData[pPage->hdrOffset] & 0x7) != pCur->anvil.flags ){
+      Rprintf("ERROR \"\":%d flags 0x%X != (Anvil) 0x%X\n", pCur->pBtree ? sqlite3BtreeGetFilename(pCur->pBtree) : NULL, pCur->pgnoRoot, pPage->aData[pPage->hdrOffset] & 0x7, pCur->anvil.flags);
     }
   }
 #endif
@@ -8162,9 +8162,9 @@ char *sqlite3BtreeIntegrityCheck(
 ** open so it is safe to access without the BtShared mutex.
 */
 const char *sqlite3BtreeGetFilename(Btree *p){
-#if HAVE_TOILET
-  if( p->pBt->toilet.only ){
-    return "(toilet-only)";
+#if HAVE_ANVIL
+  if( p->pBt->anvil.only ){
+    return "(Anvil-only)";
   }
 #endif
   assert( p->pBt->pPager!=0 );

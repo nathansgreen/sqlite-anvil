@@ -1788,8 +1788,8 @@ struct Sqlite3Config {
   int nPage;                        /* Number of pages in pPage[] */
   int isInit;                       /* True after initialization has finished */
   int isMallocInit;                 /* True after malloc is initialized */
-#if HAVE_TOILET
-  int isToiletInit;                 /* True after toilet is initialized */
+#if HAVE_ANVIL
+  int isAnvilInit;                  /* True after Anvil is initialized */
 #endif
   sqlite3_mutex *pInitMutex;        /* Mutex used by sqlite3_initialize() */
 };

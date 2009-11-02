@@ -119,12 +119,12 @@ static int bail_on_error = 0;
 */
 static int stdin_is_interactive = 1;
 
-#if HAVE_TOILET
+#if HAVE_ANVIL
 /*
-** Use toilet for data storage in addition to or instead of btree files.
+** Use Anvil for data storage in addition to or instead of btree files.
 */
-static int use_toilet = 1;
-static int use_only_toilet = 0;
+static int use_anvil = 1;
+static int use_only_anvil = 0;
 #endif
 
 /*
@@ -961,13 +961,13 @@ static int process_input(struct callback_data *p, FILE *in);
 */
 static void open_db(struct callback_data *p){
   if( p->db==0 ){
-#if HAVE_TOILET
+#if HAVE_ANVIL
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-    if( use_toilet ){
-      flags |= SQLITE_OPEN_TOILET;
+    if( use_anvil ){
+      flags |= SQLITE_OPEN_ANVIL;
     }
-    if( use_only_toilet ){
-      flags |= SQLITE_OPEN_ONLY_TOILET;
+    if( use_only_anvil ){
+      flags |= SQLITE_OPEN_ONLY_ANVIL;
     }
     sqlite3_open_v2(p->zDbFilename, &p->db, flags, NULL);
 #else
@@ -1895,9 +1895,9 @@ static const char zOptions[] =
   "   -bail                stop after hitting an error\n"
   "   -interactive         force interactive I/O\n"
   "   -batch               force batch I/O\n"
-#if HAVE_TOILET
-  "   -notoilet            disable toilet mode\n"
-  "   -onlytoilet          use only toilet mode\n"
+#if HAVE_ANVIL
+  "   -noanvil             disable Anvil mode\n"
+  "   -onlyanvil           use only Anvil mode\n"
 #endif
   "   -column              set output mode to 'column'\n"
   "   -csv                 set output mode to 'csv'\n"
@@ -1993,7 +1993,7 @@ int main(int argc, char **argv){
   }
 #endif
 
-#if !HAVE_TOILET
+#if !HAVE_ANVIL
   /* Go ahead and open the database file if it already exists.  If the
   ** file does not exist, delay opening it.  This prevents empty database
   ** files from being created if a user mistypes the database name argument
@@ -2054,13 +2054,13 @@ int main(int argc, char **argv){
       stdin_is_interactive = 1;
     }else if( strcmp(z,"-batch")==0 ){
       stdin_is_interactive = 0;
-#if HAVE_TOILET
-    }else if( strcmp(z,"-notoilet")==0 ){
-      use_toilet = 0;
-      use_only_toilet = 0;
-    }else if( strcmp(z,"-onlytoilet")==0 ){
-      use_toilet = 1;
-      use_only_toilet = 1;
+#if HAVE_ANVIL
+    }else if( strcmp(z,"-noanvil")==0 ){
+      use_anvil = 0;
+      use_only_anvil = 0;
+    }else if( strcmp(z,"-onlyanvil")==0 ){
+      use_anvil = 1;
+      use_only_anvil = 1;
 #endif
     }else if( strcmp(z,"-help")==0 || strcmp(z, "--help")==0 ){
       usage(1);

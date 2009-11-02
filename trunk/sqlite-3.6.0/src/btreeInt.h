@@ -208,8 +208,8 @@
 #include "btree.h"
 #include "os.h"
 #include <assert.h>
-#if HAVE_TOILET
-#include <toilet++.h>
+#if HAVE_ANVIL
+#include <anvil.h>
 #include <transaction.h>
 #endif
 
@@ -351,34 +351,34 @@ struct Btree {
 #define TRANS_READ  1
 #define TRANS_WRITE 2
 
-#if HAVE_TOILET
-typedef struct BtToilet BtToilet;
-struct BtToilet {
-  int only;                 /* Nonzero for toilet-only */
-  struct tx_handle tx;      /* The transaction handle */
-  int dir_fd;               /* The containing directory */
-  tpp_params *tbl_config;   /* The config for table dtables */
-  tpp_params *idx_config;   /* The config for index dtables */
-  tpp_dtable_cache *cache;  /* The dtable cache */
-  tpp_dtable *root;         /* The root dtable */
-  tpp_dtable *one;          /* The dtable at page 1 */
+#if HAVE_ANVIL
+typedef struct BtAnvil BtAnvil;
+struct BtAnvil {
+  int only;                   /* Nonzero for Anvil-only */
+  struct tx_handle tx;        /* The transaction handle */
+  int dir_fd;                 /* The containing directory */
+  anvil_params *tbl_config;   /* The config for table dtables */
+  anvil_params *idx_config;   /* The config for index dtables */
+  anvil_dtable_cache *cache;  /* The dtable cache */
+  anvil_dtable *root;         /* The root dtable */
+  anvil_dtable *one;          /* The dtable at page 1 */
 };
 
 /* next table number and flags 0-15 */
-#define TOILET_ROOT_INFO_ROW   0
+#define ANVIL_ROOT_INFO_ROW   0
 /* first available user table number */
-#define TOILET_FIRST_TABLE_NO  2
+#define ANVIL_FIRST_TABLE_NO  2
 
-#define TOILET_CONFIG_LITERAL(x) #x
+#define ANVIL_CONFIG_LITERAL(x) #x
 
-typedef struct BtToiletCursor BtToiletCursor;
-struct BtToiletCursor {
-  int flags;                /* The flags for this table */
-  tpp_dtable *dtable;       /* The dtable backing this table */
-  tpp_blobcmp *blobcmp;     /* The blob comparator to use */
-  tpp_dtable_iter *cursor;  /* The toilet iterator ("cursor") */
-  tpp_dtype saved_key;      /* The saved key used to reseek the iterator */
-  uint32_t fetch_key;       /* Storage returned by sqlite3BtreeKeyFetch() */
+typedef struct BtAnvilCursor BtAnvilCursor;
+struct BtAnvilCursor {
+  int flags;                  /* The flags for this table */
+  anvil_dtable *dtable;       /* The dtable backing this table */
+  anvil_blobcmp *blobcmp;     /* The blob comparator to use */
+  anvil_dtable_iter *cursor;  /* The Anvil iterator ("cursor") */
+  anvil_dtype saved_key;      /* The saved key used to reseek the iterator */
+  uint32_t fetch_key;         /* Storage returned by sqlite3BtreeKeyFetch() */
   bool saved;
 };
 #endif
@@ -402,8 +402,8 @@ struct BtToiletCursor {
 */
 struct BtShared {
   Pager *pPager;        /* The page cache */
-#if HAVE_TOILET
-  BtToilet toilet;      /* Toilet data */
+#if HAVE_ANVIL
+  BtAnvil anvil;        /* Anvil data */
 #endif
   sqlite3 *db;          /* Database connection currently using this Btree */
   BtCursor *pCursor;    /* A list of all open cursors */
@@ -474,8 +474,8 @@ struct BtCursor {
   BtCursor *pNext, *pPrev;  /* Forms a linked list of all cursors */
   struct KeyInfo *pKeyInfo; /* Argument passed to comparison function */
   Pgno pgnoRoot;            /* The root page of this tree */
-#if HAVE_TOILET
-  BtToiletCursor toilet;    /* Toilet cursor info */
+#if HAVE_ANVIL
+  BtAnvilCursor anvil;      /* Anvil cursor info */
 #endif
   MemPage *pPage;           /* Page that contains the entry */
   int idx;                  /* Index of the entry in pPage->aCell[] */
