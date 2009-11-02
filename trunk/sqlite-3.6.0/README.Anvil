@@ -1,0 +1,9 @@
+This copy of SQLite has been modified to use Anvil as its backend data store
+instead of (or, for debugging, in addition to) its original B-tree-based
+backend. Run its configure script with --with-anvil and provide the path to your
+compiled Anvil tree. (Download Anvil with git; see the link below.)
+
+It is based on SQLite 3.6.0, and the differences between the original and this
+patched version can be calculated with "svn diff -r4".
+
+For more information about Anvil please see: http://read.cs.ucla.edu/anvil
